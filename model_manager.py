@@ -94,6 +94,12 @@ class ModelManager:
         contamination = self.contamination
         return IsolationForest(contamination=contamination)
     
+    def generate_model_filename(self, filepath):
+        # Ensure directory exists
+        os.makedirs('models', exist_ok=True)
+        converted_path = filepath.replace("/", "_").replace(".log", "_log.pkl")
+        return f"models/model_{converted_path}"
+    
     def create_new_model(self, log_file_id, filepath):
         try:
             self.individual_model_dict['individual_model'] = self.initialize_model()
@@ -129,7 +135,7 @@ class ModelManager:
             #print(f"[Individual Model] --> model dictionary saved at path: {self.model_path}")
         except Exception as e:
             print(f"[{self.logfile_path}] [Individual Model] --> ERROR: exception saving individual model dictionary: {str(e)}")
-
+    
     def train_individual_model(self):
         # Assuming self.features_np_array contains the TF-IDF values
         X = self.features_np_array
@@ -219,8 +225,7 @@ class ModelManager:
                 self.anomalies['log_text'].append(anomaly_log_text) # Directly append the log text
 
         return anomaly_features, anomaly_log_texts
-
-
+    
     def display_anomalies(self):
         # Create a PrettyTable object
         table = PrettyTable()
@@ -245,7 +250,6 @@ class ModelManager:
 
         print(table)
 
-
     def truncate_log_line(self, log_line, max_length=100):
         if isinstance(log_line, dict):
             content = log_line['content']
@@ -256,92 +260,7 @@ class ModelManager:
 
         return log_line_str + '...' if len(content) > max_length else log_line_str
 
-    # # Using the master model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
-    # def detect_anomalies(self, anomaly_log_texts_list, threshold):
-    #   threshold = self.threshold
-    #   print(f"Combined Anomaly Log Texts: {anomaly_log_texts_list}")
-    #   print("Predictions:", self.predictions) # Print predictions
-
-    #   # Convert the scores to a NumPy array
-    #   scores_array = np.array(self.scores)
-
-    #   # Normalize the scores to represent probabilities
-    #   normalized_scores = (scores_array - min(scores_array)) / (max(scores_array) - min(scores_array))
-
-    #   for idx, (score, prediction) in enumerate(zip(normalized_scores, self.predictions)):
-    #       if prediction == -1 and score > threshold: # Change the condition to consider higher scores
-    #           print("Score:", score, "Prediction:", prediction) # Print score and prediction
-    #           print("Conditions:", prediction == -1, score > threshold) # Print conditions
-    #           log_text = anomaly_log_texts_list[idx]
-    #           self.anomalies['log_text'].append(log_text)
-    #           self.anomalies['score'].append(score * 100) # Convert to percentage
-    #   return self.anomalies
-
-    ############## OLD REVISIO BELOW #################
-    def load_model_deprecated(self, log_file_id, filepath):
-        model = None
-        model_filename = self.database_manager.get_model_filename_from_log_filepath(filepath)
-        if model_filename and len(model_filename) > 0:
-            if os.path.exists(model_filename):
-                try:
-                    print(f"[{filepath}] [Individual Model] --->Loading model from file {model_filename}")
-                    model = joblib.load(model_filename)
-                except Exception as e:
-                        traceback.print_exc() # This line prints the full traceback
-                        print(f"[{filepath}] [Individual Model] ---> An error occurred while loading model: {e}")
-            else:
-                print(f"[{filepath}] [Individual Model] ---> Model file {model_filename} does not exist on disk, creating a new model.")
-                model = self.create_new_model(log_file_id, filepath)
-        else:
-            print(f"[{filepath}] [Individual Model] ---> No existing model found in DB, creating a new model.")
-            model, model_filename = self.create_new_model(log_file_id, filepath)
-        
-        return model, model_filename
-
     
-    def dump_model_to_file(self, model, filepath):
-        joblib.dump(model, filepath)
-
-    def save_new_model(self, model, filepath, log_file_id):
-        # Save the model to a file
-        model_filename = self.generate_model_filename(filepath)
-        self.dump_model_to_file(model, model_filename)
-        #Update database with model filename
-        self.database_manager.set_model_filename(log_file_id, filepath, model_filename)
-    
-    def save_model(self, log_file_id, filepath):
-        model_filename = self.generate_model_filename(filepath)
-        self.save_model_to_file(self.model, model_filename)
-        log_filepath = self.database_manager.get_model_log_filepath(log_file_id)
-        self.database_manager.set_model_filename(log_file_id, log_filepath, model_filename) 
-
-    def get_filepath_from_log_file_id(self, log_file_id):
-        log_filepath = self.database_manager.get_filepath_from_logs(log_file_id)
-        return log_filepath
-    
-    def generate_model_filename(self, filepath):
-        # Ensure directory exists
-        os.makedirs('models', exist_ok=True)
-        converted_path = filepath.replace("/", "_").replace(".log", "_log.pkl")
-        return f"models/model_{converted_path}"
-    
-    def train_model_tfidf(self, log_file_id, filepath, features, model):
-        X = [feature['tfidf_values'] for feature in features]
-        model.fit(X)
-
-        # Save the model
-        self.save_new_model(model, filepath, log_file_id)
-        return model
-    
-    def train_model_anomalies(self, log_file_id, filepath, features, anomaly_features):
-        X = [feature['tfidf_values'] for feature in features]
-        X += anomaly_features
-        model, model_name = self.load_model(log_file_id, filepath)
-        model.fit(X)
-        # Save the model
-        model_filename = self.generate_model_filename(filepath)
-        self.dump_model_to_file(model, model_filename)
-
     def align_features(self, features, expected_features):
         features_array = np.array(features)  # Convert to a NumPy array if not already
         print(f"[{self.logfile_path}] [Individual Model] ---> Features (number of dimensions): {np.ndim(features_array)}")
@@ -360,37 +279,6 @@ class ModelManager:
             aligned_features.append(aligned_feature)
         return np.array(aligned_features)
 
-    # def detect_anomalies(self, model, features, raw_log_texts, anomalies_threshold=0.01):
-    #     # Extract the TF-IDF values and align them to the expected number of features
-    #     X = [feature['tfidf_values'] for feature in features]
-    #     expected_features = model.n_features_in_  # Get the expected number of features from the model
-    #     # Align the features once, outside the loop
-    #     aligned_X = self.align_features(X, expected_features)
-        
-    #     print(f"Shape of aligned_X: {np.shape(aligned_X)}")
-
-    #     scores = model.decision_function(aligned_X)  # The anomaly score of each sample
-
-    #     # Invert the scores so a higher percentage indicates it's more likely an anomaly
-    #     max_score = np.max(scores)
-    #     inverted_scores = max_score - scores
-
-    #     # Convert to percentages
-    #     percentage_scores = inverted_scores * 100 / max_score
-
-    #     # Apply threshold if not provided, calculate based on the 1% quantile
-    #     if anomalies_threshold is None:
-    #         anomalies_threshold = np.percentile(percentage_scores, 99)  # Note the change to 99 percentile
-
-
-    #     predictions_with_threshold = [1 if score > anomalies_threshold else -1 for score in percentage_scores]
-
-    #     anomaly_indices = [i for i in range(len(predictions_with_threshold)) if predictions_with_threshold[i] == 1]
-    #     anomaly_features = [aligned_X[i] for i in anomaly_indices]
-    #     anomaly_log_texts = [raw_log_texts[i] for i in anomaly_indices]
-
-    #     return percentage_scores, predictions_with_threshold, anomaly_features, anomaly_log_texts
-    
     def insert_anomaly_log_texts(self, model_name, anomaly_log_texts):
         model_name = os.path.basename(model_name)
         print(f"[{self.logfile_path}] [Individual Model] ---> Storing anomaly log lines for model {model_name}")
@@ -424,7 +312,8 @@ class ModelManager:
         except Exception as e:
             print(f"[{self.logfile_path}] [Individual Model] ---> An error occurred while storing {array_type} numpy array: {e}")
             return False
-
+        
     def list_individual_model_paths(cls):
-            model_files = [f for f in os.listdir('models/') if f.endswith('.pkl') and f != 'master_model.pkl']  # Exclude master_models.pkl
-            return model_files
+       model_files = [f for f in os.listdir('models/') if f.endswith('.pkl') and f != 'master_model.pkl']  # Exclude master_models.pkl
+       return model_files
+
