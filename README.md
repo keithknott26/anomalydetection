@@ -16,16 +16,19 @@ This project aims to perform anomaly detection on raw logs using ensemble machin
 10. **Future Integration**: This is a POC and will likely include integration with a timeseries database to better visualize and tag the anomalies as they come into the monitoring system (similar to Splunk).
 
 ## Running:
-\`\`\`python3 main.py --log_dir sample_input_logs\`\`\`
+```
+python3 main.py --log_dir sample_input_logs
+```
 ## Requirements
 
 ### PostgreSQL (required by Drain logparser)
 
-\`\`\`bash
+```
+bash
 brew install postgresql
 pip3 install psycopg2-binary boto3 scikit-learn logparser drain3
 export SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL=True
-\`\`\`
+```
 
 ## Core Classes and Functions
 
