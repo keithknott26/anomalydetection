@@ -1,4 +1,7 @@
-# Anomaly Detection on Raw Logs Using Ensemble Machine Learning Models (IsolationForest)
+## Anomaly Detection on Raw Logs Using Ensemble Machine Learning Models (IsolationForest)
+
+## Screenshot
+![Screenshot Image](screenshot.png)
 
 ## Overview
 
