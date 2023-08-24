@@ -5,3 +5,5 @@ joblib
 prettytable
 python-Levenshtein
 APScheduler
+psycopg2-binary
+drain3
