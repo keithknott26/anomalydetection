@@ -18,19 +18,14 @@ This project aims to perform anomaly detection on raw logs using ensemble machin
 9. **Master Model**: Once the individual models are trained on the log data, you can enable the master model which polls the individual models for anomalies and performs anomaly detection at a bird's eye level, watching over the individual models. This gives a reasonably accurate view of the anomalies detected across the entire logging root directory or your application suite.
 10. **Future Integration**: This is a POC and will likely include integration with a timeseries database to better visualize and tag the anomalies as they come into the monitoring system (similar to Splunk).
 
+## Install Requirements
+```
+bash
+./run.sh
+```
 ## Running:
 ```
 python3 main.py --log_dir sample_input_logs
-```
-## Requirements
-
-### PostgreSQL (required by Drain logparser)
-
-```
-bash
-brew install postgresql
-pip3 install psycopg2-binary boto3 scikit-learn drain3 python-Levenshtein
-export SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL=True
 ```
 
 ## Core Classes and Functions
