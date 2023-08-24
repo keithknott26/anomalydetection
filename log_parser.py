@@ -8,10 +8,6 @@ from drain3 import TemplateMiner
 from drain3.template_miner_config import TemplateMinerConfig
 from drain3.file_persistence import FilePersistence
 
-#timestamp_pattern = re.compile(r'^[\[\(]?(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{2}/\d{2}/\d{4}:\d{2}:\d{2}:\d{2}|\w{3} \d{2} \d{2}:\d{2}:\d{2}|\w{3} \d{1,2}, \d{4} \d{1,2}:\d{1,2}:\d{1,2}|\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2},\d{2}|\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}|\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}|\d{4}\d{2}\d{2}T\d{2}:\d{2}:\d{2}|\d{8} \d{2}:\d{2}:\d{2}|[A-Z]\w{2,8} \d{1,2} \d{4} \d{2}:\d{2}:\d{2}|\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2} \d{2}/\d{2}/\d{4}|[A-Za-z]{3,4} \d{2} \d{2}:\d{2}:\d{2} \d{4}|[A-Za-z]{3,4}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?|\d{2}\w{3}\d{2} \d{2}:\d{2}:\d{2}|\d{2}/\d{2}/\d{4}:\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{2,3}|[A-Za-z]{3,4} \d{2}, \d{4} \d{2}:\d{2}:\d{2} \w{3}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6}|\d{4}/\d{2}/\d{2}-\d{2}:\d{2}:\d{2}|\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2}|[A-Za-z]{3,4} \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}\.\d{3} \w{3}|W\d{2}\w{3}\d{2} \d{2}:\d{2}:\d{2} \d{4}|[A-Za-z]{3,4} \w{3} \d{2} \d{2}:\d{2}:\d{2}\.\d{6} \d{4}|[A-Za-z]{3,4} \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} \w{3}\.\d{3,6}|[A-Za-z]{3,4}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} \w{3}\.\d{3,6}|\d{4}\d{2}\d{2} \d{2}:\d{2}:\d{2}\.\d{3}|[A-Za-z]{3,4} \w{3} \d{2} \d{2}:\d{2}:\d{2}\.\d{3} \d{4} \w{3})[\]\)]?')
-#timestamp_pattern = re.compile(r'^(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{2}/\d{2}/\d{4}:\d{2}:\d{2}:\d{2}|\w{3} \d{2} \d{2}:\d{2}:\d{2}|\w{3} \d{1,2}, \d{4} \d{1,2}:\d{1,2}:\d{1,2}|\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2},\d{2}|\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}|\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}|\d{4}\d{2}\d{2}T\d{2}:\d{2}:\d{2}|\d{8} \d{2}:\d{2}:\d{2}|[A-Z]\w{2,8} \d{1,2} \d{4} \d{2}:\d{2}:\d{2}|\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2} \d{2}/\d{2}/\d{4}|[A-Za-z]{3,4} \d{2} \d{2}:\d{2}:\d{2} \d{4}|[A-Za-z]{3,4}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?|\d{2}\w{3}\d{2} \d{2}:\d{2}:\d{2}|\d{2}/\d{2}/\d{4}:\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{2,3}|[A-Za-z]{3,4} \d{2}, \d{4} \d{2}:\d{2}:\d{2} \w{3}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6}|\d{4}/\d{2}/\d{2}-\d{2}:\d{2}:\d{2}|\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2}|[A-Za-z]{3,4} \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}\.\d{3} \w{3}|W\d{2}\w{3}\d{2} \d{2}:\d{2}:\d{2} \d{4}|[A-Za-z]{3,4} \w{3} \d{2} \d{2}:\d{2}:\d{2}\.\d{6} \d{4}|[A-Za-z]{3,4} \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} \w{3}\.\d{3,6}|[A-Za-z]{3,4}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} \w{3}\.\d{3,6}|\d{4}\d{2}\d{2} \d{2}:\d{2}:\d{2}\.\d{3}|[A-Za-z]{3,4} \w{3} \d{2} \d{2}:\d{2}:\d{2}\.\d{3} \d{4} \w{3})[\]\)]?')
-# List of common timestamp patterns in various log files, expected at the start of the line
-
 class LogParser:
     def __init__(self):
         # Compiling regular expressions for different log types
@@ -29,7 +25,8 @@ class LogParser:
 
         # Pattern for replacing whitespace characters
         self.whitespace_pattern = re.compile(r'\t+|\r+|\n+|\r\n+|\s\s+|\r\n|\t')
-
+        
+        # List of common timestamp patterns in various log files, expected at the start of the line
         self.timestamp_patterns = [
             r'^[\[\(]?\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[\]\)]?', # Format with hyphens
             r'^[\[\(]?\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}[\]\)]?', # Format with slashes

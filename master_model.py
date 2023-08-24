@@ -13,6 +13,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from prettytable import PrettyTable
+import Levenshtein
+from Levenshtein import ratio
 
 # Local Modules
 from model_manager import ModelManager
@@ -385,24 +387,46 @@ class MasterModel:
     def display_anomalies(self):
         # Create a PrettyTable object
         table = PrettyTable()
-        table.field_names = ["Anomaly Probability (%)", "Anomaly Score", "(Combined Master Model) Log Line"]
+        table.field_names = ["Anomaly Probability (%)", "Anomaly Score", "Similar", "(Combined Master Model) Log Line"]
         table.align["Anomaly Probability (%)"] = "l"
         table.align["Anomaly Score"] = "l"
+        table.align["Similar"] = "l"
         table.align["(Combined Master Model) Log Line"] = "l"
+
+        # Similarity threshold
+        self.similarity_threshold = 0.8
 
         # Check if there are any anomalies
         if self.anomalies and len(self.anomalies['log_text']) > 0:
-            # Normalize the scores to a percentage
+            # Group similar log lines
+            groups = []
             for log_text, score in zip(self.anomalies['log_text'], self.anomalies['score']):
                 normalized_score = 100 - ((score - self.global_min_score) / (self.global_max_score - self.global_min_score)) * 100
-                table.add_row([normalized_score, score, self.truncate_log_line(log_text, 175)])
+                found_group = False
+                for group in groups:
+                    if ratio(log_text, group['log_text']) >= self.similarity_threshold:
+                        group['count'] += 1
+                        if normalized_score > group['normalized_score']:
+                            group['normalized_score'] = normalized_score
+                            group['score'] = score
+                            group['log_text'] = log_text
+                        found_group = True
+                        break
+                if not found_group:
+                    groups.append({'log_text': log_text, 'score': score, 'normalized_score': normalized_score, 'count': 1})
+
+            # Add rows to the table
+            for group in groups:
+                anomaly_probability = "{:.3f}".format(group['normalized_score'])
+                anomaly_score = "{:.4f}".format(group['score'])
+                table.add_row([anomaly_probability, anomaly_score, group['count'], self.truncate_log_line(group['log_text'], 175)])
 
             # Sort the table by "Anomaly Score" in ascending order
             table.sortby = "Anomaly Score"
-            table.reversesort = False
+            table.reversesort = True
         else:
             # Add a row indicating no anomalies found
-            table.add_row(["-", "-", "None found"])
+            table.add_row(["-", "-", "None found", "None found"])
 
         print(table)
 

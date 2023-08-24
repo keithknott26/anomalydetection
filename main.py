@@ -44,8 +44,8 @@ MASTER_MODEL_ANOMALIES_THRESHOLD = 0.00
 INDIVIDUAL_MODEL_MAX_FEATURES = 3000
 # The maximum number of features to consider when extracting features from the log lines (a higher number means more memory usage but potentially less sensitive to anomalies)
 MASTER_MODEL_MAX_FEATURES = 1000
-# The maximum number of samples to consider when extracting features from the log lines (lower numbers mean less memory usage and make the model more sensitive to anomalies)
-INDIVIDUAL_MODEL_MAX_SAMPLES = 0.2
+# The threshold for the similarity between log lines returned in the anomalies table, if you see duplicate/similar lines you'll want to increase this value. Default: 80%
+INDIVIDUAL_MODEL_SIMILARITY_THRESHOLD= 0.85
 # The maximum number of samples to consider when extracting features from the individual models (lower numbers mean less memory usage and make the model more sensitive to anomalies)
 MASTER_MODEL_MAX_SAMPLES = 0.2
 # The number of individual models to consider when doing calculations on the master model for anomaly detection
@@ -68,7 +68,7 @@ def parse_arguments():
     # parser.add_argument('--log_stream', required=True, help='Log stream name.')
     # parser.add_argument('--start_time', required=True, help='Start time for log retrieval.')
     # parser.add_argument('--end_time', required=True, help='End time for log retrieval.')
-    parser.add_argument('--log_dir', required=True, help='Directory for filesystem logs.')
+    parser.add_argument('--log-dir', required=True, help='Directory for filesystem logs.')
     return parser.parse_args()
 
 def is_log_content_valid(log_content):
@@ -124,7 +124,7 @@ def process_file(filepath, hash_value, log_dir):
 
     raw_log, log_file_id = log_retriever.retrieve_from_filesystem(filepath, hash_value)
     #print(f"[{filepath}] ---> Marking chunk id: {log_file_id} as in process")
-    model_manager_instance = ModelManager(log_retriever, log_parser, str(filepath), INDIVIDUAL_ANOMALIES_THRESHOLD, INDIVIDUAL_MODEL_CONTAMINATION, INDIVIDUAL_MODEL_MAX_FEATURES, INDIVIDUAL_MODEL_MAX_SAMPLES, MODELS_DIRECTORY, NUMPY_DIRECTORY)
+    model_manager_instance = ModelManager(log_retriever, log_parser, str(filepath), INDIVIDUAL_ANOMALIES_THRESHOLD, INDIVIDUAL_MODEL_CONTAMINATION, INDIVIDUAL_MODEL_MAX_FEATURES, INDIVIDUAL_MODEL_SIMILARITY_THRESHOLD, MODELS_DIRECTORY, NUMPY_DIRECTORY)
     # Start processing the file
     database_manager_instance.start_processing(log_file_id)
 
@@ -152,16 +152,8 @@ def process_file(filepath, hash_value, log_dir):
                     anomaly_features, anomaly_log_texts = result
                 else:
                     anomaly_features, anomaly_log_texts = [], []
-               
-                #print(f"{filepath} [Individual model] ---> anomalies scores ({len(model_manager_instance.anomalies)}): {model_manager_instance.anomalies['score']}")
-                #print(f"{filepath} [Individual model] ---> anomalies predictions ({len(model_manager_instance.predictions)}): {model_manager_instance.predictions}")
-                #Display anomalies found in a table
+
                 model_manager_instance.display_anomalies()
-                #print(f"{filepath} [Individual model] ---> anomaly feature extraction complete ({len(anomaly_features)}) found.")
-                #print(f"{filepath} [Individual model] ---> anomaly features ({anomaly_features}")
-                
-                
-                #print(f"{filepath} [Individual model] ---> Storing records (anomaly features).")
                 insert_anomaly_features_result = model_manager_instance.insert_anomaly_features(model_manager_instance.model_path, np.array(anomaly_features))
                 #Store anomaly features
                 if insert_anomaly_features_result:
@@ -169,28 +161,12 @@ def process_file(filepath, hash_value, log_dir):
                 else:
                     print(f"[{filepath}] [Individual model] ---> ERROR: Failed to store records (anomaly features).")
 
-                #print(f"{filepath} [Individual model] ---> Storing records (anomaly log lines)")
                 insert_anomaly_log_texts_result = model_manager_instance.insert_anomaly_log_texts(model_manager_instance.model_path,np.array(anomaly_log_texts))
                 if insert_anomaly_log_texts_result:
                     print(f"[{filepath}] [Individual model] ---> Stored records (anomaly features).")
                 else:
                     print(f"[{filepath}] [Individual model] ---> ERROR: Failed to store records (anomaly log texts).")
-                
-                
-                #print(f"{filepath} [Individual model] ---> anomalies identified: {len(anomaly_log_texts)} (truncated to 200 characters)")
-                #print(f"{filepath} --> ---------------------------------------------------------------------------------------------------------------------------------------------------\n\n")
-                #for anomaly in anomaly_log_texts:
-                #    print(f"{truncate_log_line(anomaly['content'], 200)}")
-                #print(f"\n{filepath} --> ---------------------------------------------------------------------------------------------------------------------------------------------------")
 
-                # Train model if features are produced on TD-IDF values represented in anomaly_features
-                #print(f"{filepath} [Individual model] ---> training individual model with anomaly features ({len(anomaly_features)}).")
-                #model_manager_instance.train_model_anomalies(log_file_id, filepath, features, anomaly_features)
-                #print(f"{filepath} [Individual model] ---> trained on Anomaly Features.")
-                #print(f"{filepath} --> [Master model] loading individual models.")
-
-                # Process master model
-                #process_master_model(model_manager_instance, model_manager_instance.features_dict, anomaly_features, anomaly_log_texts)
                 process_master_model(model_manager_instance, log_retriever, log_parser)
                 
             else:
@@ -202,85 +178,58 @@ def process_file(filepath, hash_value, log_dir):
 
 def process_master_model(model_manager_instance, log_retriever, log_parser):
     # Check if at least 2 individual models exist
-    if len(os.listdir('models/')) >= 4:
-        #Returns a list of models (model file names)
-        model_paths = model_manager_instance.list_individual_model_paths()
+    model_paths = model_manager_instance.list_individual_model_paths()
+    print(f"[Master Model] --> Found {len(model_paths)} individual models: {model_paths}")
+    if len(model_paths) >= 2:
         master_model_instance = MasterModel(model_manager_instance, log_retriever, log_parser, model_paths, MASTER_MODEL_PATH, MASTER_MODEL_ANOMALIES_THRESHOLD, MAX_NUM_MODELS_TO_CONSIDER, MASTER_MODEL_MAX_FEATURES, MASTER_MODEL_MAX_SAMPLES)
-        
-        # Creating a dictionary for individual models
-        if len(model_paths) < 2:
-            print(f"[Master Model] --> At least 2 individual models must be loaded, but only {len(model_paths)} were found of {type(model_paths)}, waiting for more models.")
-        elif len(model_paths) > 2:
-            # Creating a dictionary for individual models (contains joblib models)
-            #individual_models = {model_paths[i]: joblib.load("models/" + model_paths[i]) for i in range(len(model_paths))}
+        # Creating a dictionary for individual models (contains joblib models)
+        #individual_models = {model_paths[i]: joblib.load("models/" + model_paths[i]) for i in range(len(model_paths))}
+        # Creating a master model object
+        #master_model_obj = master_model_instance.initialize_model()
+        # Constructing the final dictionary structure
+        #master_model_w_models_dict = {'master_model': master_model_obj, 'individual_models': individual_models}
+        #print(f"[Master model] --> Master model with individual models: {master_model_w_models_dict}")
+        # Combine individual models into master model
+        # {'master_model': IsolationForest(contamination=0.01), 
+        #   'individual_models': {
+        #       'model_sample_input_logs_file-instance-k_log.pkl': IsolationForest(contamination=0.01),
+        #       'model_sample_input_logs_file-instance-j_log.pkl': IsolationForest(contamination=0.01), 
+        #       'model_sample_input_logs_file-instance-l_log.pkl': IsolationForest(contamination=0.01)
+        #    }
+        # }
 
-            # Creating a master model object
-            #master_model_obj = master_model_instance.initialize_model()
+        print(f"[Master model] --> saving master model.")
+        master_model_instance.save_master_model()  
+        print(f"[Master Model] --> [Master model] generating predictions for anomalies based on individual models")
+        print(f"[Master Model] --> Getting combined anomaly log texts list")
+        # print(f"[Master Model] --> Master Model Dict: {master_model_instance.master_model_dict}")                         
+        combined_anomaly_log_texts_list = master_model_instance.get_combined_anomaly_log_texts()
+        raw_lines = []
+        for line in combined_anomaly_log_texts_list.tolist():
+                raw_lines.append(line)
 
-            # Constructing the final dictionary structure
-            #master_model_w_models_dict = {'master_model': master_model_obj, 'individual_models': individual_models}
-
-            #print(f"[Master model] --> Master model with individual models: {master_model_w_models_dict}")
-            
-            # Combine individual models into master model
-            # {'master_model': IsolationForest(contamination=0.01), 
-            #   'individual_models': {
-            #       'model_sample_input_logs_file-instance-k_log.pkl': IsolationForest(contamination=0.01),
-            #       'model_sample_input_logs_file-instance-j_log.pkl': IsolationForest(contamination=0.01), 
-            #       'model_sample_input_logs_file-instance-l_log.pkl': IsolationForest(contamination=0.01)
-            #    }
-            # }
-
-            print(f"[Master model] --> saving master model.")
-            master_model_instance.save_master_model()
-            #joblib.dump(master_model_w_models_dict, MASTER_MODEL_PATH)
-            
-            #Load recently saved model from disk
-            #print(f"[Master model] --> reloading master model.")
-            #master_model_dict = joblib.load(MASTER_MODEL_PATH)
-            #print(f"[Master model] --> successfully compiled {len(model_paths)} individual models into a dictionary.")
-
-            # Use master_model for predictions
-            print(f"[Master Model] --> [Master model] generating predictions for anomalies based on individual models")
-            #print(f"[Master Model] --> Shape of individual model's features: {np.shape(features)}")
-            #print(f"[Master Model] --> Shape of individual model's anomaly features: {np.shape(anomaly_features)}")
-#           print(f"[Master Model] --> Getting combined anomaly features array")
-#           combined_anomaly_features_array = master_model_instance.get_combined_anomaly_features(master_model_dict)
-            print(f"[Master Model] --> Getting combined anomaly log texts list")
-           # print(f"[Master Model] --> Master Model Dict: {master_model_instance.master_model_dict}")                         
-            combined_anomaly_log_texts_list = master_model_instance.get_combined_anomaly_log_texts()
-            raw_lines = []
-            for line in combined_anomaly_log_texts_list.tolist():
-                 raw_lines.append(line)
-
-            if len(combined_anomaly_log_texts_list.tolist()) > 0: 
-                print(f"[Master Model] --> Combined anomaly log texts list length: ({len(combined_anomaly_log_texts_list.tolist())}) items")
-                print(f"[Master Model] --> Parsing combined anomaly texts: ({len(raw_lines)}) items")
-                structured_logs = log_parser.parse_log_lines("Master Model", raw_lines)
-                print(f"[Master Model] --> Structured Logs: ({len(structured_logs)})")
-                if len(structured_logs) > 0:
-                    master_model_instance.extract_features(structured_logs)
-                    print(f"[Master Model] --> Master features: ({len(master_model_instance.features_dict)}) dictionary items, numpy array size: {np.size(master_model_instance.features_np_array)} shape: {np.shape(master_model_instance.features_np_array)}")
-                    master_model = master_model_instance.train_master_model()
-                    print(f"[Master Model] --> Model trained.")
-                    print(f"[Master Model] --> Detecting anomalies")
-                    master_model_instance.detect_anomalies(combined_anomaly_log_texts_list, MASTER_MODEL_ANOMALIES_THRESHOLD)
-                    print(f"[Master Model] --> Displaying anomalies")
-                    master_model_instance.display_anomalies()
-                else:
-                    print(f"[Master Model] --> No combined anomalies found, skipping master model anomaly detection...")
+        if len(combined_anomaly_log_texts_list.tolist()) > 0: 
+            print(f"[Master Model] --> Combined anomaly log texts list length: ({len(combined_anomaly_log_texts_list.tolist())}) items")
+            print(f"[Master Model] --> Parsing combined anomaly texts: ({len(raw_lines)}) items")
+            structured_logs = log_parser.parse_log_lines("Master Model", raw_lines)
+            print(f"[Master Model] --> Structured Logs: ({len(structured_logs)})")
+            if len(structured_logs) > 0:
+                master_model_instance.extract_features(structured_logs)
+                print(f"[Master Model] --> Master features: ({len(master_model_instance.features_dict)}) dictionary items, numpy array size: {np.size(master_model_instance.features_np_array)} shape: {np.shape(master_model_instance.features_np_array)}")
+                master_model = master_model_instance.train_master_model()
+                print(f"[Master Model] --> Model trained.")
+                print(f"[Master Model] --> Detecting anomalies")
+                master_model_instance.detect_anomalies(combined_anomaly_log_texts_list, MASTER_MODEL_ANOMALIES_THRESHOLD)
+                print(f"[Master Model] --> Displaying anomalies")
+                master_model_instance.display_anomalies()
             else:
-                print(f"[Master Model] --> No anomalies found yet, skipping master model anomaly detection...")
-
-        #    # master_anomaly_features, master_anomaly_log_texts = master_model_instance.detect_anomalies(model_manager, master_model_dict, combined_anomaly_features_array, combined_anomaly_log_texts_list, anomalies_threshold)
-        #     print(f"[Master Model] --> anomaly features ({master_anomalies['features']})")
-        #     print(f"[Master Model] --> anomalies identified: {len(master_anomalies['log_line'])} (truncated to 200 characters)")
-        #     print(f"[Master Model] --> ---------------------------------------------------------------------------------------------------------------------------------------------------\n\n")
-        #     for anomaly in master_anomalies['log_line']:
-        #         print(f"{truncate_log_line(anomaly, 200)}")
-        #     print(f"\n[Master Model] --> ---------------------------------------------------------------------------------------------------------------------------------------------------")
+                print(f"[Master Model] --> No combined anomalies found, skipping master model anomaly detection...")
         else:
-            print(f"[Master Model] --> Not enough individual models to combine.")
+            print(f"[Master Model] --> No anomalies found yet, skipping master model anomaly detection...")
+    else:
+        print(f"[Master Model] --> Not enough individual models to combine.")
+        print(f"[Master Model] --> At least 2 individual models must be loaded, but only {len(model_paths)} were found of {type(model_paths)}, waiting for more models.")
+
 def main():
     #Initialize Arguments
     args = parse_arguments()

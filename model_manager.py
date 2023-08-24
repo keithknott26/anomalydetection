@@ -7,6 +7,7 @@ import traceback
 import json
 import io
 import time
+from collections import defaultdict
 
 # Third-Party Libraries
 import nltk
@@ -18,6 +19,9 @@ from nltk.corpus import stopwords
 import joblib
 from threading import Lock
 from prettytable import PrettyTable
+import Levenshtein
+from Levenshtein import ratio
+
 
 # Local Modules
 from database_manager import DatabaseManager
@@ -37,16 +41,15 @@ logging.getLogger('nltk').setLevel(logging.CRITICAL)
 #         return JSONEncoder.default(self, obj)
 
 class ModelManager:
-    def __init__(self, log_retriever, log_parser, filepath, anomalies_threshold=-0.04, model_contamination=0.1, max_features=10000, max_samples=100000, models_directory='models/', numpy_directory='numpy/'):
+    def __init__(self, log_retriever, log_parser, filepath, anomalies_threshold=-0.04, model_contamination=0.1, max_features=10000, similarity_threshold=0.8, models_directory='models/', numpy_directory='numpy/'):
         self.log_retriever = log_retriever
         self.log_parser = log_parser
         self.database_manager = DatabaseManager()
         self.individual_model_dict = {}
         self.contamination = model_contamination
         self.max_features = max_features
-        self.max_samples = max_samples
         self.log_file_id =  self.log_retriever.get_id_from_filepath(filepath)
-
+        
         if self.database_manager.get_model_filename_from_log_filepath(filepath) is None:
             self.model_path = self.generate_model_filename(filepath)
         else:
@@ -80,9 +83,9 @@ class ModelManager:
                 'model_filepath': self.model_path,
                 'log_filepath': self.logfile_path
             }
-        self.max_samples = max_samples
         self.max_features = max_features
         self.threshold = anomalies_threshold
+        self.similarity_threshold = similarity_threshold
         self.models_directory = models_directory
         self.numpy_directory = numpy_directory
         # Initialize TF-IDF vectorizer
@@ -226,29 +229,50 @@ class ModelManager:
 
         return anomaly_features, anomaly_log_texts
     
+    from Levenshtein import ratio
+
     def display_anomalies(self):
         # Create a PrettyTable object
         table = PrettyTable()
-        table.field_names = ["Anomaly Probability (%)", "Anomaly Score", f"(Model for {self.logfile_path}) Log Line"]
-        table.align["Anomaly Probability (%)"] = "l"
+        table.field_names = ["Anomaly Probability(%)", "Anomaly Score", "Similar", f"(Model for {self.logfile_path}) Log Line"]
+        table.align["Anomaly Probability(%)"] = "l"
         table.align["Anomaly Score"] = "l"
+        table.align["Similar Lines"] = "l"
         table.align[f"(Model for {self.logfile_path}) Log Line"] = "l"
 
         # Check if there are any anomalies
         if self.anomalies and len(self.anomalies['log_text']) > 0:
-            # Normalize the scores to a percentage
+            # Group similar log lines
+            groups = []
             for log_text, score in zip(self.anomalies['log_text'], self.anomalies['score']):
                 normalized_score = 100 - ((score - self.global_min_score) / (self.global_max_score - self.global_min_score)) * 100
-                table.add_row([normalized_score, score, self.truncate_log_line(log_text, 175)])
+                found_group = False
+                for group in groups:
+                    if ratio(log_text, group['log_text']) >= self.similarity_threshold: # 80% similarity threshold
+                        group['count'] += 1
+                        if normalized_score > group['normalized_score']: # Keep the highest score and corresponding log text
+                            group['normalized_score'] = normalized_score
+                            group['score'] = score
+                            group['log_text'] = log_text
+                        found_group = True
+                        break
+                if not found_group:
+                    groups.append({'log_text': log_text, 'score': score, 'normalized_score': normalized_score, 'count': 1})
 
-            # Sort the table by "Anomaly Score" in ascending order
+            # Add rows to the table
+            # Add rows to the table
+            for group in groups:
+                anomaly_probability = "{:.4f}".format(group['normalized_score'])
+                anomaly_score = "{:.4f}".format(group['score'])
+                table.add_row([anomaly_probability, anomaly_score, group['count'], self.truncate_log_line(group['log_text'], 175)])            # Sort the table by "Anomaly Score" in ascending order
             table.sortby = "Anomaly Score"
-            table.reversesort = False
+            table.reversesort = True
         else:
             # Add a row indicating no anomalies found
             table.add_row(["-", "-", "None found"])
 
         print(table)
+
 
     def truncate_log_line(self, log_line, max_length=100):
         if isinstance(log_line, dict):
@@ -279,6 +303,18 @@ class ModelManager:
             aligned_features.append(aligned_feature)
         return np.array(aligned_features)
 
+    def calculate_levenshtein_distances(self, log_lines):
+        distances = []
+        for i, line1 in enumerate(log_lines):
+            row = []
+            for j, line2 in enumerate(log_lines):
+                if i != j:
+                    row.append(Levenshtein.distance(line1, line2))
+                else:
+                    row.append(0) # Distance to itself is 0
+            distances.append(row)
+        return distances
+    
     def insert_anomaly_log_texts(self, model_name, anomaly_log_texts):
         model_name = os.path.basename(model_name)
         print(f"[{self.logfile_path}] [Individual Model] ---> Storing anomaly log lines for model {model_name}")

@@ -5,7 +5,7 @@
 
 ## Overview
 
-This project aims to perform anomaly detection on raw logs using ensemble machine learning models, specifically IsolationForest. The following steps outline the process:
+This project aims to perform anomaly detection on raw logs using ensemble machine learning models, it uses IsolationForest and Levenshein distance to determine outliers. The following steps outline the process:
 
 1. **Input Data**: Input data can be a root directory of static logs or live logs (logs being written to currently).
 2. **Database Record Creation**: The program will walk the directory and find logs to monitor, creating a database record for each one.
@@ -29,7 +29,7 @@ python3 main.py --log_dir sample_input_logs
 ```
 bash
 brew install postgresql
-pip3 install psycopg2-binary boto3 scikit-learn logparser drain3
+pip3 install psycopg2-binary boto3 scikit-learn drain3 python-Levenshtein
 export SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL=True
 ```
 
