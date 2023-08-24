@@ -103,6 +103,15 @@ class ModelManager:
         converted_path = filepath.replace("/", "_").replace(".log", "_log.pkl")
         return f"models/model_{converted_path}"
     
+    def generate_model_filename(self, filepath):
+        # Ensure directory exists
+        os.makedirs('models', exist_ok=True)
+        
+        # Replace slashes with tildes and keep the dots in place
+        converted_path = filepath.replace("/", "~")
+        
+        return f"models/{converted_path}.pkl"
+    
     def create_new_model(self, log_file_id, filepath):
         try:
             self.individual_model_dict['individual_model'] = self.initialize_model()
@@ -127,11 +136,6 @@ class ModelManager:
             self.create_new_model(self.log_file_id, self.logfile_path)
 
     def save_individual_model(self):
-        # result = self.database_manager.get_model_filename_from_log_filepath(self.logfile_path)
-        # self.model_path = result[0]
-        # if self.model_path is None:
-        #     print("[Individual Model] --> ERROR: individual model path is not set.")
-        #     return
         try:
             # Save the master model dictionary
             joblib.dump(self.individual_model_dict, self.model_path)
@@ -350,6 +354,6 @@ class ModelManager:
             return False
         
     def list_individual_model_paths(cls):
-       model_files = [f for f in os.listdir('models/') if f.endswith('.pkl') and f != 'master_model.pkl']  # Exclude master_models.pkl
-       return model_files
+        model_files = [f for f in os.listdir('models/') if f.endswith('.pkl') and 'master_model.pkl' not in f]
+        return model_files
 
