@@ -1,0 +1,7 @@
+nltk
+numpy
+scikit-learn
+joblib
+prettytable
+python-Levenshtein
+APScheduler
