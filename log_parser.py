@@ -7,6 +7,9 @@ from datetime import timedelta
 from drain3 import TemplateMiner
 from drain3.template_miner_config import TemplateMinerConfig
 from drain3.file_persistence import FilePersistence
+from termcolor import colored
+from logger_config import logger
+
 
 class LogParser:
     def __init__(self):
@@ -68,9 +71,9 @@ class LogParser:
         batch_start_time = start_time
         batch_size = self.batch_size
         structured_logs = []
-        print(f"[{filepath}] --> Line count before condensing & deduplicating: {len(lines)}")
+        logger.info(f"[{colored(filepath, 'yellow')}] --> Line count before condensing & deduplicating: {len(lines)}")
         condensed_lines = self.condense_lines(filepath, lines)
-        print(f"[{filepath}] ---> Line count after condensing & deduplicating {len(condensed_lines)}")
+        logger.info(f"[{colored(filepath, 'yellow')}] --> Line count after condensing & deduplicating {len(condensed_lines)}")
         for line in condensed_lines:
             line = line.strip()
             #print(f"Line: {line}")
@@ -81,7 +84,7 @@ class LogParser:
             if line_count % batch_size == 0:
                 time_took = time.time() - batch_start_time
                 rate = batch_size / time_took
-                print(f"[{filepath}] --> Processing line: {line_count}, rate {rate:.1f} lines/sec, "
+                logger.info(f"[{colored(filepath, 'yellow')}] --> Processing line: {line_count}, rate {rate:.1f} lines/sec, "
                             f"{len(self.template_miner.drain.clusters)} clusters so far.")
                 batch_start_time = time.time()
             if result["change_type"] != "none":
@@ -92,7 +95,7 @@ class LogParser:
                 #print(f"Parameters being added: {str(params)}")
                 cluster = self.template_miner.match(line)
                 if cluster is None:
-                    print(f"[{filepath}] --> No cluster match found for line: {line}")
+                    logger.info(f"[{colored(filepath, 'yellow')}] --> No cluster match found for line: {line}")
                 else:
                     template = cluster.get_template()
                     parameters = self.template_miner.get_parameter_list(template, line)
@@ -105,7 +108,7 @@ class LogParser:
                 })
         time_took = time.time() - start_time
         rate = line_count / time_took
-        print(f"[{filepath}] ---> Done mining file in {time_took:.2f} sec. Total of {line_count} lines, rate {rate:.1f} lines/sec, "
+        logger.info(f"[{colored(filepath, 'yellow')}] --> Done mining file in {time_took:.2f} sec. Total of {line_count} lines, rate {rate:.1f} lines/sec, "
                     f"{len(self.template_miner.drain.clusters)} clusters")
         sorted_clusters = sorted(self.template_miner.drain.clusters, key=lambda it: it.size, reverse=True)
 
@@ -203,7 +206,7 @@ class LogParser:
         #     print(f"in-non_timestamp_block = {in_non_timestamp_block}")
         #     print(f"has_timestamp = {has_timestamp}")
 
-        print(f"[{filepath}] ---> Condense lines: { len(output)} valid lines, ({skipped_empty_line_count}) empty lines skipped. ")
+        logger.info(f"[{colored(filepath, 'yellow')}] --> Condense lines: { len(output)} valid lines, ({skipped_empty_line_count}) empty lines skipped. ")
         return output
 
     def unique_structured_logs(self, structured_logs_master):
@@ -244,7 +247,7 @@ class LogParser:
             return False
         
     def parse_log_line(self, log_line):
-        print("log_line before calling extract_timestamp:", log_line) # Add this line
+        #print("log_line before calling extract_timestamp:", log_line) # Add this line
         log_type = self.identify_log_type(log_line)
         if len(log_line['content']) > 0:
             timestamp = self.extract_timestamp(log_line['content'])
@@ -278,6 +281,6 @@ class LogParser:
                 timestamp = parse(timestamp_str)
                 return timestamp
             except Exception as e:
-                print(f"Failed to parse timestamp from log line: {log_line}. Error: {e}")
+                logger.info(f"[{colored('Individual Model', 'yellow')}] --> Failed to parse timestamp from log line: {log_line}, check masking patterns. Error: {e}")
         #print(f"No matching timestamp found in log line: {log_line}.")
         return None

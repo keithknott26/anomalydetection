@@ -15,43 +15,47 @@ from nltk.corpus import stopwords
 from prettytable import PrettyTable
 import Levenshtein
 from Levenshtein import ratio
+from termcolor import colored
+
 
 # Local Modules
 from model_manager import ModelManager
 from database_manager import DatabaseManager
 from log_parser import LogParser
 from log_retriever import LogRetriever
+from logger_config import logger
 
 # Additional Configuration
 logging.getLogger('nltk').setLevel(logging.CRITICAL)
 
-MASTER_MODEL_PATH = 'models/master_model.pkl'
-
-class MasterModel:
-    def __init__(self, model_manager, log_retriever, log_parser, individual_model_paths=None, master_model_path=None, threshold=0.1, master_contamination=0.005, max_num_models=20, max_features=1000, max_samples=10000):
-        self.master_model_dict = {}
-        # If a master model path is provided, load it; otherwise, create a new master model
-        self.master_model_path = master_model_path
-        self.max_num_models = max_num_models
-        self.threshold = threshold
-        self.contamination = master_contamination
-        self.max_samples = max_samples
-        self.max_features = max_features
+class EnsembleModel:
+    def __init__(self, config, model_manager, log_retriever, log_parser, individual_model_paths=None):
+        self.config = config
+        print(f"Debug self.config : {type(self.config)}")
+        self.ensemble_model_dict = {}
+        # If a Ensemble model path is provided, load it; otherwise, create a new Ensemble model
+        self.models_directory = self.config.get('GENERAL', 'MODELS_DIRECTORY')
+        self.numpy_directory = self.config.get('GENERAL', 'NUMPY_DIRECTORY')
+        self.ensemble_model_path = self.config.get('ENSEMBLE_MODEL', 'MODEL_PATH')
+        self.max_num_models = int(self.config.get('ENSEMBLE_MODEL', 'MAX_NUM_MODELS_TO_CONSIDER'))
+        self.threshold = float(self.config.get('ENSEMBLE_MODEL', 'ANOMALIES_THRESHOLD'))
+        self.contamination = float(self.config.get('ENSEMBLE_MODEL', 'MODEL_CONTAMINATION'))
+        self.max_features = int(self.config.get('ENSEMBLE_MODEL', 'MAX_FEATURES'))
 
         # If individual model paths are provided, load them
         # Load the individual models
         self.individual_models = {}
         if individual_model_paths:
-            self.individual_models = {path: joblib.load("models/" + path) for path in individual_model_paths}
+            self.individual_models = {path: joblib.load(self.models_directory + "/" + path) for path in individual_model_paths}
 
         self.features_dict = {}
         self.features_np_array = None
         self.scores = []
         self.predictions = []
         self.anomalies = {'log_text': [], 'score': []}
-        # Create the master model dictionary
-        self.master_model_dict = {
-                'master_model': None,
+        # Create the Ensemble model dictionary
+        self.ensemble_model_dict = {
+                'ensemble_model': None,
                 'individual_models': self.individual_models,
                 'features_np_array': self.features_np_array,
                 'features_dict': self.features_dict,
@@ -60,13 +64,13 @@ class MasterModel:
                 'anomalies' : self.anomalies
         }
 
-        if master_model_path and os.path.exists(master_model_path):
-            self.load_master_model()
+        if self.ensemble_model_path and os.path.exists(self.ensemble_model_path):
+            self.load_ensemble_model()
         else:
-            print(f"[Master Model] --> Master Model not found at path: {master_model_path}, creating new model.")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Ensemble model not found at path: {self.ensemble_model_path}, creating new model.")
             self.create_new_model()
 
-        #print(f"[Master Model] --> Master Model dictionary: {self.master_model_dict}")
+        #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Ensemble model dictionary: {self.ensemble_model_dict}")
         self.database_manager = DatabaseManager()
         self.log_parser = log_parser
         self.log_retriever = log_retriever
@@ -80,52 +84,51 @@ class MasterModel:
 
     def initialize_model(self):
         # Common method to initialize the model
-        return IsolationForest(contamination=0.1)
+        return IsolationForest(contamination=float(self.contamination))
 
     def create_new_model(self):
-        self.master_model = self.initialize_model()
-        self.master_model_dict['master_model'] = self.master_model
-        self.save_master_model()
-        return self.master_model
+        self.ensemble_model = self.initialize_model()
+        self.ensemble_model_dict['ensemble_model'] = self.ensemble_model
+        self.save_ensemble_model()
+        return self.ensemble_model
 
-    def load_master_model(self):
+    def load_ensemble_model(self):
         try:
-            self.master_model_dict = joblib.load(self.master_model_path)
-            self.master_model = self.master_model_dict.get('master_model')  # Use get method
-            if self.master_model is None:
-                raise KeyError('master_model')
-            print("[Master Model] --> Master Model loaded.")
+            self.ensemble_model_dict = joblib.load(self.ensemble_model_path)
+            self.ensemble_model = self.ensemble_model_dict.get('ensemble_model')  # Use get method
+            if self.ensemble_model is None:
+                raise KeyError('ensemble_model')
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Ensemble model loaded.")
         except (FileNotFoundError, KeyError):
-            print(f"[Master Model] --> Master Model not found at path: {self.master_model_path}, creating new model.")
+            logger.warn(f"[{colored('Ensemble model', 'blue')}] --> Ensemble model not found at path: {self.ensemble_model_path}, creating new model.")
             self.create_new_model()
 
-    def save_master_model(self):
+    def save_ensemble_model(self):
         try:
-            # Save the master model dictionary
-            joblib.dump(self.master_model_dict, self.master_model_path)
-            #print(f"[Master Model] --> Master Model dictionary saved at path: {self.master_model_path}")
+            # Save the Ensemble model dictionary
+            joblib.dump(self.ensemble_model_dict, self.ensemble_model_path)
+            #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Ensemble model dictionary saved at path: {self.ensemble_model_path}")
         except Exception as e:
-            print(f"[Master Model] --> Error saving Master Model dictionary: {str(e)}")
+            logger.error(f"[{colored('Ensemble model', 'blue')}] --> Error saving Ensemble model dictionary: {str(e)}")
 
-    def train_master_model(self):
+    def train_ensemble_model(self):
         # Assuming self.features_np_array contains the TF-IDF values
         X = self.features_np_array
-        self.master_model.fit(X)
+        self.ensemble_model.fit(X)
 
         # Get the scores and predictions
-        self.scores = self.master_model.decision_function(X).tolist()
-        self.predictions = self.master_model.predict(X).tolist()
-        self.save_master_model()
+        self.scores = self.ensemble_model.decision_function(X).tolist()
+        self.predictions = self.ensemble_model.predict(X).tolist()
+        self.save_ensemble_model()
 
     def update_global_scores(self, scores):
         self.global_min_score = min(self.global_min_score, min(scores))
         self.global_max_score = max(self.global_max_score, max(scores))
 
     def get_individual_model_filepath_from_model_name_by_type(self, model_name, array_type):
-        numpy_directory = "numpy/"
         model_path_filename_without_extension = os.path.splitext(os.path.basename(model_name))[0]
         filename = model_path_filename_without_extension + '-' + array_type + '.npy'
-        file_path = os.path.join(numpy_directory, filename)
+        file_path = os.path.join(self.numpy_directory, filename)
         return file_path
 
     def truncate_log_line(self, log_line, max_length=100):
@@ -138,18 +141,18 @@ class MasterModel:
 
         return log_line_str + '...' if len(content) > max_length else log_line_str
 
-    def predict(self, combined_anomaly_features, master_model_dict):
+    def predict(self, combined_anomaly_features, ensemble_model_dict):
         predictions = []
         # Test individual predictions
-        individual_models = list(master_model_dict['individual_models'].items())[:self.max_num_models]
+        individual_models = list(ensemble_model_dict['individual_models'].items())[:self.max_num_models]
         for model_name, features in zip(individual_models, combined_anomaly_features[:self.max_num_models]):
-            model = master_model_dict['individual_models'][model_name]
-            print(f"Model {model_name} expects {model.n_features_in_} features")
+            model = ensemble_model_dict['individual_models'][model_name]
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Model {model_name} expects {model.n_features_in_} features")
             features_path = self.get_individual_model_filepath_from_model_name_by_type(model_name, 'anomaly_features')
             features = np.load(features_path)
-            print(f"Loaded features shape: {features.shape}")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Loaded features shape: {features.shape}")
             individual_prediction = model.predict(features)  # Removed the reshape here
-            print(f"Individual prediction: {individual_prediction}")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Individual prediction: {individual_prediction}")
             predictions.append(individual_prediction)
         
         # Combine the predictions using combine_and_pad_arrays
@@ -165,14 +168,14 @@ class MasterModel:
         combined_prediction = np.mean(predictions, axis=0)
         return combined_prediction
 
-    def dump_model_to_file(self, master_model, models, filepath):
-        serializable_model = self.prepare_for_serialization(master_model, models)
+    def dump_model_to_file(self, ensemble_model, models, filepath):
+        serializable_model = self.prepare_for_serialization(ensemble_model, models)
         joblib.dump(serializable_model, filepath)
 
-    def prepare_for_serialization(self, master_model, models):
+    def prepare_for_serialization(self, ensemble_model, models):
             # Return a dictionary with attributes that can be pickled
             return {
-                'master_model': master_model,
+                'ensemble_model': ensemble_model,
                 'models': models,
                 # add other attributes that can be serialized
                 'database_manager': None,
@@ -208,24 +211,23 @@ class MasterModel:
     # Retrieve the anomaly features from disk
     def get_anomaly_features(self, model_name):
         anomaly_features = self.load_numpy_array(model_name, 'anomaly_features')
-        print(f"get_anomaly_features --> {type(anomaly_features)}  {anomaly_features.shape}")
+        #print(f"get_anomaly_features --> {type(anomaly_features)}  {anomaly_features.shape}")
         return anomaly_features
 
     def load_numpy_array(self, model_path, array_type):
         # Construct the full path for the .npy file
-        numpy_directory = "numpy/"
         model_path_filename_without_extension = os.path.splitext(os.path.basename(model_path))[0]
         filename = f"{model_path_filename_without_extension}-{array_type}.npy"
-        file_path = os.path.join(numpy_directory, filename)
+        file_path = os.path.join(self.numpy_directory, filename)
 
         # Load the array if the file exists
         if os.path.exists(file_path):
             array = np.load(file_path, allow_pickle=True)
-            #print(f"[Master Model] --> Numpy array with features loaded from {file_path} for model {model_path}")
+            #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Numpy array with features loaded from {file_path} for model {model_path}")
             return array
         else:
             #This will trigger if the log file is empty.
-            #print(f"[Master Model] Numpy file {file_path} not found for model {model_path}")
+            #print(f"[Ensemble model] Numpy file {file_path} not found for model {model_path}")
             return []
 
     def get_model_name(self, model_path):
@@ -238,7 +240,7 @@ class MasterModel:
         model_name = os.path.basename(model_path).split('.')[0] # Assuming the name is the file name without extension
         return model_name
     
-    # Using the master model dictionary, obtain a combined list of the anomaly log texts for each model in the dictionary
+    # Using the Ensemble model dictionary, obtain a combined list of the anomaly log texts for each model in the dictionary
     def get_combined_anomaly_log_texts(self):
         anomaly_log_texts_list = []
         for model_name, model in self.individual_models.items():
@@ -247,7 +249,7 @@ class MasterModel:
             if anomaly_log_texts.size > 0:  # Check if the array has elements
                 anomaly_log_texts_list.append(anomaly_log_texts)
             else:
-                print(f"[Master Model] --> No anomalies found for model {model_name}")
+                logger.warn(f"[{colored('Ensemble model', 'blue')}] --> No anomalies found for model {model_name}")
 
 
         # Combine the arrays into a single array
@@ -257,42 +259,42 @@ class MasterModel:
             combined_anomaly_log_texts_array = np.array([])
 
         if combined_anomaly_log_texts_array.size > 0:
-            #print(f"[Master Model] --> Returning combined anomaly log texts array of shape {combined_anomaly_log_texts_array.shape}")
-            #print(f"[Master Model] --> Returning combined anomaly log texts array of type {type(combined_anomaly_log_texts_array)}")
-            #print(f"[Master Model] --> Returning combined anomaly log texts array of size {np.size(combined_anomaly_log_texts_array)}")
+            #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Returning combined anomaly log texts array of shape {combined_anomaly_log_texts_array.shape}")
+            #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Returning combined anomaly log texts array of type {type(combined_anomaly_log_texts_array)}")
+            #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Returning combined anomaly log texts array of size {np.size(combined_anomaly_log_texts_array)}")
             return combined_anomaly_log_texts_array
         else:
-            print(f"[Master Model] --> No anomalies returned from master.model.get_combined_anomaly_log_texts()")
+            logger.warn(f"[{colored('Ensemble model', 'blue')}] --> No anomalies returned from ensemble.model.get_combined_anomaly_log_texts()")
             return np.array([])
 
         
-    # Using the master model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
-    def get_combined_anomaly_features(self, master_model_dict):
+    # Using the Ensemble model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
+    def get_combined_anomaly_features(self, ensemble_model_dict):
         anomaly_features_list = []
 
         # Iterating through individual models
-        for idx, (model_name, model) in enumerate(master_model_dict['individual_models'].items()):
-            print(f"{model_name} --> Model expects {model.n_features_in_} anomaly features")
+        for idx, (model_name, model) in enumerate(ensemble_model_dict['individual_models'].items()):
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> {model_name} Model expects {colored(model.n_features_in_,'yellow')} anomaly features")
             # Fetch anomaly features from disk
             anomaly_features_np_array = np.array(self.get_anomaly_features(model_name))
             anomaly_features_list.append(anomaly_features_np_array)  # Append each array to the list
 
-            print(f"combined function anomaly_features_np_array --> {type(anomaly_features_np_array)} to length {len(anomaly_features_np_array)}")
-            print(f"combined function anomaly_features_np_array.shape --> shape {len(anomaly_features_np_array.shape)}")
-            print(f"combined function anomaly_features_np_array --> value {anomaly_features_np_array}")
-            print(f"combined function anomaly_features_list --> length {len(anomaly_features_list)}")
-            print(f"combined function anomaly_features_list --> size {len(anomaly_features_list)}")
+            #print(f"combined function anomaly_features_np_array --> {type(anomaly_features_np_array)} to length {len(anomaly_features_np_array)}")
+            #print(f"combined function anomaly_features_np_array.shape --> shape {len(anomaly_features_np_array.shape)}")
+            #print(f"combined function anomaly_features_np_array --> value {anomaly_features_np_array}")
+            #print(f"combined function anomaly_features_list --> length {len(anomaly_features_list)}")
+            #print(f"combined function anomaly_features_list --> size {len(anomaly_features_list)}")
 
         # Call the combine_and_pad_arrays function with the list of arrays
         combined_anomaly_features_array = self.combine_and_pad_arrays(anomaly_features_list)
 
         if combined_anomaly_features_array.size > 0:
-            print(f"[Master Model] --> Returning combined anomaly features array of shape {combined_anomaly_features_array.shape}")
-            print(f"[Master Model] --> Returning combined anomaly features array of type {type(combined_anomaly_features_array)}")
-            print(f"[Master Model] --> Returning combined anomaly features array of size {np.size(combined_anomaly_features_array)}")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Returning combined anomaly features array of shape {combined_anomaly_features_array.shape}")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Returning combined anomaly features array of type {type(combined_anomaly_features_array)}")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> Returning combined anomaly features array of size {np.size(combined_anomaly_features_array)}")
             return combined_anomaly_features_array
         else:
-            print(f"[Master Model] --> No anomaly features returned from master_model.get_combined_anomaly_features()")
+            logger.info(f"[{colored('Ensemble model', 'blue')}] --> No anomaly features returned from ensemble_model.get_combined_anomaly_features()")
             return np.array([])  # Return an empty numpy array instead of an empty list
 
     def combine_and_pad_arrays(self, arrays):
@@ -310,7 +312,7 @@ class MasterModel:
 
         return combined_array
     
-    # Using the master model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
+    # Using the Ensemble model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
     def extract_features(self, structured_data):
         features_list = []
         tfidf_values_list = []
@@ -320,10 +322,10 @@ class MasterModel:
 
         # Check if there are any valid raw documents left
         if not raw_documents:
-            print("No valid content found in parsed logs")
+            logger.warn(f"[{colored('Ensemble model', 'blue')}] --> No valid content found in parsed logs")
             return
 
-        print(f"[Master Model] --> Raw documents found: {len(raw_documents)}")
+        logger.info(f"[{colored('Ensemble model', 'blue')}] --> Raw documents found: {len(raw_documents)}")
 
         # Compute TF-IDF values
         if not self.is_vectorizer_fitted:
@@ -339,7 +341,7 @@ class MasterModel:
                 'tfidf_values': tfidf_value,
                 'content': line['content'] # original log line
             }
-            #print(f"[Master Model] --> Feature added: {feature}")
+            #logger.info(f"[{colored('Ensemble model', 'blue')}] --> Feature added: {feature}")
             features_list.append(feature)
             tfidf_values_list.append(tfidf_value)
 
@@ -351,9 +353,9 @@ class MasterModel:
 
     def align_features(self, features, expected_features):
         features_array = np.array(features)  # Convert to a NumPy array if not already
-        print("[Master Model] --> Number of dimensions (features):", np.ndim(features_array))
-        print("[Master Model] --> Shape of features:", features_array.shape)
-        print("[Master Model] --> Shape of expected features:", features_array.shape)
+        logger.info(f"[{colored('Ensemble model', 'blue')}] --> Number of dimensions (features):", np.ndim(features_array))
+        logger.info(f"[{colored('Ensemble model', 'blue')}] --> Shape of features:", features_array.shape)
+        logger.info(f"[{colored('Ensemble model', 'blue')}] --> Shape of expected features:", features_array.shape)
         aligned_features = []
         for feature in features_array:
             if len(feature) > expected_features:
@@ -367,10 +369,9 @@ class MasterModel:
             aligned_features.append(aligned_feature)
         return np.array(aligned_features)
     
-    # Using the master model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
-    def detect_anomalies(self, combined_anomaly_log_texts_list, threshold=-0.4):
-        threshold = self.threshold
-
+    # Using the Ensemble model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
+    def detect_anomalies(self, combined_anomaly_log_texts_list):
+        
         # Iterate through the features dictionary
         for idx, (log_text, feature) in enumerate(self.features_dict.items()):
             score = self.scores[idx]  # Use the original score
@@ -380,18 +381,19 @@ class MasterModel:
             self.global_min_score = min(self.global_min_score, score)
             self.global_max_score = max(self.global_max_score, score)
 
-            if prediction == -1 and score < threshold:  # Condition to consider higher scores
+            if prediction == -1 and score < self.threshold:  # Condition to consider higher scores
                 self.anomalies['log_text'].append(log_text)
                 self.anomalies['score'].append(score)  # Keep the score in its original form
 
     def display_anomalies(self):
+        print("\n\n")
         # Create a PrettyTable object
         table = PrettyTable()
-        table.field_names = ["Anomaly Probability (%)", "Anomaly Score", "Similar", "(Combined Master Model) Log Line"]
+        table.field_names = ["Anomaly Probability (%)", "Anomaly Score", "Similar", "(Combined Ensemble model) Log Line"]
         table.align["Anomaly Probability (%)"] = "l"
         table.align["Anomaly Score"] = "l"
         table.align["Similar"] = "l"
-        table.align["(Combined Master Model) Log Line"] = "l"
+        table.align["(Combined Ensemble model) Log Line"] = "l"
 
         # Similarity threshold
         self.similarity_threshold = 0.8
@@ -429,39 +431,5 @@ class MasterModel:
             table.add_row(["-", "-", "None found", "None found"])
 
         print(table)
-
-
-    
-    @classmethod
-    def load_individual_models_deprecated(cls):
-        model_files = [f for f in os.listdir('models/') if f.endswith('.pkl') and f != 'master_model.pkl']  # Exclude master_models.pkl
-        models = []
-        models_expected_features = []
-        for model_file in model_files[:self.max_num_models]:
-            model_path = os.path.join('models/', model_file)
-            print(f"[Individual Model] --> Attempting to load model from: {model_path}") # Debugging print statement
-            if os.path.exists(model_path):
-                try:
-                    individual_model = joblib.load(model_path)
-                    if isinstance(individual_model, IsolationForest):
-                        first_estimator = individual_model.estimators_[0]
-                        models_expected_features.append(first_estimator.tree_.n_features)
-                        models.append(individual_model)
-                except Exception as e:
-                    print(f"Error loading model from {model_path}: {str(e)}") # Error handling
-            else:
-                print(f"Individual Model at {model_path} does not exist.")
-                return models, models_expected_features
-        return models, models_expected_features
-
-
-
-
-
-
-
-
-
-
-
+        print("\n\n")
 

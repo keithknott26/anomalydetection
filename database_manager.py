@@ -95,7 +95,7 @@ class DatabaseManager:
                 if last_checked_timestamp and in_process == 0:
                     last_checked_datetime = datetime.strptime(last_checked_timestamp, '%Y-%m-%d %H:%M:%S')
                     delta = datetime.now() - last_checked_datetime
-                    if delta.total_seconds() > threshold_minutes * 60:
+                    if delta.total_seconds() > int(threshold_minutes) * 60:
                         return True
             else:
                 return True  # Return True if no record was found

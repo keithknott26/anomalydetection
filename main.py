@@ -2,7 +2,9 @@
 import argparse
 import time
 import os
+import sys
 import logging
+import configparser
 from multiprocessing import Pool
 from functools import partial
 
@@ -10,6 +12,8 @@ from functools import partial
 import joblib
 import numpy as np
 from nltk.corpus import stopwords
+from loguru import logger
+from termcolor import colored
 
 # Local Modules
 from log_retriever import LogRetriever
@@ -19,46 +23,70 @@ from task_scheduler import TaskScheduler
 from log_parser import LogParser
 from model_manager import ModelManager
 from model_manager_factory import ModelManagerFactory
-from master_model import MasterModel
+from ensemble_model import EnsembleModel
 
 # Additional Configuration
 logging.getLogger('nltk').setLevel(logging.CRITICAL)
 
-# Set the polling interval to 1 minute for filesystem logs
-POLLING_INTERVAL_MINUTES = 1
-# Where to store the master model
-MASTER_MODEL_PATH = 'models/master_model.pkl'
-# Where to store the individual/master models and drain3 state file
-MODELS_DIRECTORY = 'models/'
-# Where to store the numpy files for the individual/master models
-NUMPY_DIRECTORY = 'numpy/'
-# The proportion of outliers in the individual models. It's used to define the threshold for outlier scores. Increasing this value will result in more anomalies being detected (per log).
-INDIVIDUAL_MODEL_CONTAMINATION = 0.1
-# The proportion of outliers in the master model. It's used to define the threshold for outlier scores. Increasing this value will result in more anomalies being detected in the master model.
-MASTER_MODEL_CONTAMINATION = 0.1
-# The percentage of anomalies expected in the data (0.00%) - there is an anomaly found if the score less than threshold, with the lower the score the more likely it is to be an anomaly. It's used to calculate the threshold in the individual (per log) models. Often the anomaly scores are negative numbers
-INDIVIDUAL_ANOMALIES_THRESHOLD = -0.04
-# The percentage of anomalies expected in the data (0.00%) - there is an anomaly found if the score less than threshold, with the lower the score the more likely it is to be an anomaly. It's used to calculate the threshold in the combined master model. Often the anomaly scores are negative numbers
-MASTER_MODEL_ANOMALIES_THRESHOLD = 0.00
-# The maximum number of features to consider when extracting features from the log lines (higher numbers mean more memory usage and this could affect performance)
-INDIVIDUAL_MODEL_MAX_FEATURES = 3000
-# The maximum number of features to consider when extracting features from the log lines (a higher number means more memory usage but potentially less sensitive to anomalies)
-MASTER_MODEL_MAX_FEATURES = 1000
-# The threshold for the similarity between log lines returned in the anomalies table, if you see duplicate/similar lines you'll want to increase this value. Default: 80%
-INDIVIDUAL_MODEL_SIMILARITY_THRESHOLD= 0.85
-# The maximum number of samples to consider when extracting features from the individual models (lower numbers mean less memory usage and make the model more sensitive to anomalies)
-MASTER_MODEL_MAX_SAMPLES = 0.2
-# The number of individual models to consider when doing calculations on the master model for anomaly detection
-MAX_NUM_MODELS_TO_CONSIDER = 20
+def load_config():
+    config = configparser.ConfigParser()
+    config.read('drain3.ini')
+    return config
+
+config = load_config()
+#Setup color logging
+# Customize the logger format
+# Create a logger for your module
+import logging
+from termcolor import colored
+
+class ColoredFormatter(logging.Formatter):
+    LEVEL_COLORS = {
+        'INFO': 'yellow',
+        'DEBUG': 'grey',
+        'WARNING': 'magenta',
+        'ERROR': 'red',
+        'CRITICAL': 'red',
+    }
+
+    LINE_COLORS = {
+        'INFO': 'green',
+        'DEBUG': 'green',
+        'WARNING': 'green',
+        'ERROR': 'green',
+        'CRITICAL': 'green',
+    }
+
+    FILENAME_COLOR = 'yellow'
+
+    def format(self, record):
+        log_message = super().format(record)
+        line_color = self.LINE_COLORS.get(record.levelname, 'magenta')
+        colored_message = colored(log_message, line_color)
+        
+        levelname_color = self.LEVEL_COLORS.get(record.levelname, 'magenta')
+        colored_levelname = colored(record.levelname, levelname_color, attrs=['bold'])
+        
+        colored_filename = colored(record.filename, self.FILENAME_COLOR, attrs=['bold'])
+        
+        colored_message = colored_message.replace(record.levelname, colored_levelname)
+        return colored_message.replace(record.filename, colored_filename)
+
+# Create a logger for your module
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create a handler and formatter
+handler = logging.StreamHandler()
+formatter = ColoredFormatter('%(asctime)s - [%(levelname)s] - [%(filename)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+handler.setFormatter(formatter)
+
+# Add the handler to the logger
+logger.addHandler(handler)
 
 class AnomalyHandler:
     def handle_anomaly(self, anomaly):
     # Handle the anomaly (e.g., send an alert, log it)
-        pass
-
-class Logger:
-    def log(self, message):
-    # Log the message (e.g., to a file or console)
         pass
 
 def parse_arguments():
@@ -89,7 +117,7 @@ def truncate_log_line(log_line, max_length=100):
 
 def get_files_to_process(log_dir, log_retriever, db_manager):
     file_paths_with_hash = []
-    
+    polling_interval=config.get('GENERAL', 'POLLING_INTERVAL_MINUTES')
     # Traverse through the log directory
     for root, _, files in os.walk(log_dir):
         file_paths = [os.path.join(root, filename) for filename in files]
@@ -98,7 +126,7 @@ def get_files_to_process(log_dir, log_retriever, db_manager):
         hash_values = log_retriever.parallel_hash_files(file_paths)
         for filepath, hash_value in zip(file_paths, hash_values):
             #print(f"Inspecting { filepath } ")
-            if db_manager.should_process_file(filepath, hash_value, threshold_minutes=POLLING_INTERVAL_MINUTES) is True:
+            if db_manager.should_process_file(filepath, hash_value, threshold_minutes=polling_interval) is True:
                 #print(f"Considering {filepath} a new file.")
                 file_paths_with_hash.append((filepath, hash_value))
             else:
@@ -117,36 +145,40 @@ def process_file(filepath, hash_value, log_dir):
     local_connection = database_manager_instance.get_connection()
     log_retriever = LogRetriever()  # Create a local instance if necessary
     log_parser = LogParser()  # Create a local instance if necessary
-    print(f"[{filepath}] ---> Starting work on chunk {hash_value}")
+    logger.info(f"[colored({filepath},'yellow')] ---> Starting work on chunk {colored(hash_value, 'blue')}")
+
     #factory = ModelManagerFactory()
     #manager = factory.get_manager(filepath, log_retriever, log_parser, database_manager_instance) #Create a separate instance of model manager per file
     #model_manager = manager # use the model manager for that specific file
 
     raw_log, log_file_id = log_retriever.retrieve_from_filesystem(filepath, hash_value)
-    #print(f"[{filepath}] ---> Marking chunk id: {log_file_id} as in process")
-    model_manager_instance = ModelManager(log_retriever, log_parser, str(filepath), INDIVIDUAL_ANOMALIES_THRESHOLD, INDIVIDUAL_MODEL_CONTAMINATION, INDIVIDUAL_MODEL_MAX_FEATURES, INDIVIDUAL_MODEL_SIMILARITY_THRESHOLD, MODELS_DIRECTORY, NUMPY_DIRECTORY)
+    #print(f"[colored({filepath},'yellow')] ---> Marking chunk id: {log_file_id} as in process")
+    model_manager_instance = ModelManager(log_retriever, log_parser, str(filepath), config)
     # Start processing the file
     database_manager_instance.start_processing(log_file_id)
 
     if len(raw_log) > 1:
-        print(f"[{filepath}] [Individual model] ---> Pre-procesing {len(raw_log)} raw log...")
+        logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Pre-procesing {colored(len(raw_log), 'yellow')} raw log lines...")
+        logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Starting work on chunk {colored(hash_value, 'blue')}")
+
+
         #parsed_logs = [log_parser.parse_log_lines(line) for line in raw_log]
-        print(f"[{filepath}] [Individual model] ---> Processing {len(raw_log)} log...")
+        logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Processing {colored(len(raw_log), 'yellow')} log...")
         structured_logs = log_parser.parse_log_lines(filepath, raw_log)
-        print(f"[{filepath}] [Individual model] ---> Storing cleaned logs: {len(structured_logs)} lines")
+        logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Storing cleaned logs: {colored(len(structured_logs), 'yellow')} lines")
         storage_result = database_manager_instance.store_logs_drain3(filepath, structured_logs)
         if storage_result:
-            print(f"[{filepath}] [Individual model] ---> Extracting TF-IDF Features from {len(structured_logs)} lines")
+            logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Extracting TF-IDF Features from {colored(len(structured_logs), 'yellow')} lines")
             model_manager_instance.extract_features(structured_logs)
-            print(f"[{filepath}] [Individual model] ---> Completed extraction of TF-IDF features, {len(model_manager_instance.features_dict)} items (features) found, array size: {np.size(model_manager_instance.features_np_array)} shape: {np.shape(model_manager_instance.features_np_array)}")
+            logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Completed extraction of TF-IDF features, {colored(len(model_manager_instance.features_dict), 'yellow')} items (features) found, array size: {colored(np.size(model_manager_instance.features_np_array), 'red')} shape: {colored(np.shape(model_manager_instance.features_np_array), 'red')}")
             #log_file_ids = log_retriever.get_all_ids()
             if len(model_manager_instance.features_dict) > 0:
                 #Training model with features
-                print(f"[{filepath}] [Individual model] ---> Training model with {len(model_manager_instance.features_dict)} features.")
+                logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Training model with {colored(len(model_manager_instance.features_dict),'yellow')} features.")
                 model_manager_instance.train_individual_model()
                 
                 #Detect anomalies
-                print(f"[{filepath}] [Individual model] ---> Starting anomaly detection using {len(structured_logs)} cleaned log lines")
+                logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Starting anomaly detection using {colored(len(structured_logs),'yellow')} cleaned log lines")
                 result = model_manager_instance.detect_anomalies()
                 if result is not None:
                     anomaly_features, anomaly_log_texts = result
@@ -157,40 +189,40 @@ def process_file(filepath, hash_value, log_dir):
                 insert_anomaly_features_result = model_manager_instance.insert_anomaly_features(model_manager_instance.model_path, np.array(anomaly_features))
                 #Store anomaly features
                 if insert_anomaly_features_result:
-                    print(f"[{filepath}] [Individual model] ---> Stored records (anomaly features).")
+                    logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Stored records (anomaly features).")
                 else:
-                    print(f"[{filepath}] [Individual model] ---> ERROR: Failed to store records (anomaly features).")
+                    logger.error(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> ERROR: Failed to store records (anomaly features).")
 
                 insert_anomaly_log_texts_result = model_manager_instance.insert_anomaly_log_texts(model_manager_instance.model_path,np.array(anomaly_log_texts))
                 if insert_anomaly_log_texts_result:
-                    print(f"[{filepath}] [Individual model] ---> Stored records (anomaly features).")
+                    logger.info(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> Stored records (anomaly features).")
                 else:
-                    print(f"[{filepath}] [Individual model] ---> ERROR: Failed to store records (anomaly log texts).")
+                    logger.error(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> ERROR: Failed to store records (anomaly log texts).")
 
-                process_master_model(model_manager_instance, log_retriever, log_parser)
+                process_ensemble_model(model_manager_instance, log_retriever, log_parser, config)
                 
             else:
-                print("No features to train the model.")
+                logger.warn(f"[{colored(filepath,'yellow')}] [{colored('Individual model','magenta')}] ---> No features to train the model.")
         else:
             print("Storage failed.")
     database_manager_instance.end_processing(log_file_id)
     local_connection.close()
 
-def process_master_model(model_manager_instance, log_retriever, log_parser):
+def process_ensemble_model(model_manager_instance, log_retriever, log_parser, config):
     # Check if at least 2 individual models exist
-    model_paths = model_manager_instance.list_individual_model_paths()
-    print(f"[Master Model] --> Found {len(model_paths)} individual models: {model_paths}")
-    if len(model_paths) >= 2:
-        master_model_instance = MasterModel(model_manager_instance, log_retriever, log_parser, model_paths, MASTER_MODEL_PATH, MASTER_MODEL_ANOMALIES_THRESHOLD, MAX_NUM_MODELS_TO_CONSIDER, MASTER_MODEL_MAX_FEATURES, MASTER_MODEL_MAX_SAMPLES)
+    individual_model_paths = model_manager_instance.list_individual_model_paths()
+    logger.info(f"[Ensemble model] --> Found {colored(len(individual_model_paths), 'yellow')} individual models: {colored(individual_model_paths, 'yellow')}")
+    if len(individual_model_paths) >= 2:
+        ensemble_model_instance = EnsembleModel(config,model_manager_instance, log_retriever, log_parser, individual_model_paths)
         # Creating a dictionary for individual models (contains joblib models)
         #individual_models = {model_paths[i]: joblib.load("models/" + model_paths[i]) for i in range(len(model_paths))}
-        # Creating a master model object
-        #master_model_obj = master_model_instance.initialize_model()
+        # Creating a ensemble model object
+        #ensemble_model_obj = ensemble_model_instance.initialize_model()
         # Constructing the final dictionary structure
-        #master_model_w_models_dict = {'master_model': master_model_obj, 'individual_models': individual_models}
-        #print(f"[Master model] --> Master model with individual models: {master_model_w_models_dict}")
-        # Combine individual models into master model
-        # {'master_model': IsolationForest(contamination=0.01), 
+        #ensemble_model_w_models_dict = {'ensemble_model': ensemble_model_obj, 'individual_models': individual_models}
+        #print(f"[Ensemble model] --> Ensemble model with individual models: {ensemble_model_w_models_dict}")
+        # Combine individual models into ensemble model
+        # {'ensemble_model': IsolationForest(contamination=0.01), 
         #   'individual_models': {
         #       'model_sample_input_logs_file-instance-k_log.pkl': IsolationForest(contamination=0.01),
         #       'model_sample_input_logs_file-instance-j_log.pkl': IsolationForest(contamination=0.01), 
@@ -198,37 +230,37 @@ def process_master_model(model_manager_instance, log_retriever, log_parser):
         #    }
         # }
 
-        print(f"[Master model] --> saving master model.")
-        master_model_instance.save_master_model()  
-        print(f"[Master Model] --> [Master model] generating predictions for anomalies based on individual models")
-        print(f"[Master Model] --> Getting combined anomaly log texts list")
-        # print(f"[Master Model] --> Master Model Dict: {master_model_instance.master_model_dict}")                         
-        combined_anomaly_log_texts_list = master_model_instance.get_combined_anomaly_log_texts()
+        logger.info(f"[Ensemble model] --> saving ensemble model.")
+        ensemble_model_instance.save_ensemble_model()  
+        logger.info(f"[Ensemble model] --> generating predictions for anomalies based on individual models")
+        logger.info(f"[Ensemble model] --> getting combined anomaly log texts list")
+        # print(f"[Ensemble model] --> Ensemble Model Dict: {ensemble_model_instance.ensemble_model_dict}")                         
+        combined_anomaly_log_texts_list = ensemble_model_instance.get_combined_anomaly_log_texts()
         raw_lines = []
         for line in combined_anomaly_log_texts_list.tolist():
                 raw_lines.append(line)
 
         if len(combined_anomaly_log_texts_list.tolist()) > 0: 
-            print(f"[Master Model] --> Combined anomaly log texts list length: ({len(combined_anomaly_log_texts_list.tolist())}) items")
-            print(f"[Master Model] --> Parsing combined anomaly texts: ({len(raw_lines)}) items")
-            structured_logs = log_parser.parse_log_lines("Master Model", raw_lines)
-            print(f"[Master Model] --> Structured Logs: ({len(structured_logs)})")
+            logger.info(f"[Ensemble model] --> combined anomaly log texts list length: ({len(combined_anomaly_log_texts_list.tolist())}) items")
+            logger.info(f"[Ensemble model] --> parsing combined anomaly texts: ({len(raw_lines)}) items")
+            structured_logs = log_parser.parse_log_lines("Ensemble Model", raw_lines)
+            logger.info(f"[Ensemble model] --> structured Logs: ({len(structured_logs)})")
             if len(structured_logs) > 0:
-                master_model_instance.extract_features(structured_logs)
-                print(f"[Master Model] --> Master features: ({len(master_model_instance.features_dict)}) dictionary items, numpy array size: {np.size(master_model_instance.features_np_array)} shape: {np.shape(master_model_instance.features_np_array)}")
-                master_model = master_model_instance.train_master_model()
-                print(f"[Master Model] --> Model trained.")
-                print(f"[Master Model] --> Detecting anomalies")
-                master_model_instance.detect_anomalies(combined_anomaly_log_texts_list, MASTER_MODEL_ANOMALIES_THRESHOLD)
-                print(f"[Master Model] --> Displaying anomalies")
-                master_model_instance.display_anomalies()
+                ensemble_model_instance.extract_features(structured_logs)
+                logger.info(f"[Ensemble model] --> ensemble features: ({colored(len(ensemble_model_instance.features_dict),'yellow')} dictionary items, numpy array size: {colored(np.size(ensemble_model_instance.features_np_array), 'grey')} shape: {colored(np.shape(ensemble_model_instance.features_np_array), 'grey')}")
+                ensemble_model = ensemble_model_instance.train_ensemble_model()
+                logger.info(f"[Ensemble model] --> model trained.")
+                logger.info(f"[Ensemble model] --> detecting anomalies")
+                ensemble_model_instance.detect_anomalies(combined_anomaly_log_texts_list)
+                logger.info(f"[Ensemble model] --> displaying anomalies")
+                ensemble_model_instance.display_anomalies()
             else:
-                print(f"[Master Model] --> No combined anomalies found, skipping master model anomaly detection...")
+                print(f"[Ensemble model] --> no combined anomalies found, skipping ensemble model anomaly detection...")
         else:
-            print(f"[Master Model] --> No anomalies found yet, skipping master model anomaly detection...")
+            print(f"[Ensemble model] --> no anomalies found yet, skipping ensemble model anomaly detection...")
     else:
-        print(f"[Master Model] --> Not enough individual models to combine.")
-        print(f"[Master Model] --> At least 2 individual models must be loaded, but only {len(model_paths)} were found of {type(model_paths)}, waiting for more models.")
+        print(f"[Ensemble model] --> Not enough individual models to combine.")
+        print(f"[Ensemble model] --> At least 2 individual models must be loaded, but only {colored(len(individual_model_paths), 'magenta')} were found of {colored(type(individual_model_paths),'yellow')}, waiting for more models.")
 
 def main():
     #Initialize Arguments
@@ -264,16 +296,17 @@ def main():
     #logs = log_retriever.retrieve_from_cloudwatch(start_time, end_time)  # Pass start_time and end_time here
     #logs += log_retriever.retrieve_from_filesystem(log_dir)
     filepath = None
+    polling_interval = config.get('GENERAL', 'POLLING_INTERVAL_MINUTES')
     while True:
         file_paths_with_hash = get_files_to_process(log_dir, log_retriever, database_manager)
         #print(f"Found {len(file_paths_with_hash)} files to process.")
         
         # Process only the files that meet the conditions
         for (filepath, hash_value) in file_paths_with_hash:
-            if database_manager.should_process_file(filepath, hash_value, threshold_minutes=POLLING_INTERVAL_MINUTES) is True:
+            if database_manager.should_process_file(filepath, hash_value, threshold_minutes=polling_interval) is True:
                 process_with_args(log_dir, (filepath, hash_value))
             else:
-                print(f"{filepath} --> File is not ready to be processed.")
+                logger.warn(f"{filepath} --> File is not ready to be processed.")
         if filepath:
            log_retriever.update_file_last_checked_timestamp(filepath)
         time.sleep(60) # wait 1 minute in between polls for files to process
