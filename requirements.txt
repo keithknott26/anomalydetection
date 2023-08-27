@@ -7,3 +7,8 @@ python-Levenshtein
 APScheduler
 psycopg2-binary
 drain3
+prettytable
+Levenshtein
+termcolor
+rich
+
