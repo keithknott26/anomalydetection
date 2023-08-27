@@ -16,7 +16,8 @@ from prettytable import PrettyTable
 import Levenshtein
 from Levenshtein import ratio
 from termcolor import colored
-
+from rich.console import Console
+from rich.table import Table
 
 # Local Modules
 from model_manager import ModelManager
@@ -39,6 +40,7 @@ class EnsembleModel:
         self.ensemble_model_path = self.config.get('ENSEMBLE_MODEL', 'MODEL_PATH')
         self.max_num_models = int(self.config.get('ENSEMBLE_MODEL', 'MAX_NUM_MODELS_TO_CONSIDER'))
         self.threshold = float(self.config.get('ENSEMBLE_MODEL', 'ANOMALIES_THRESHOLD'))
+        self.similarity_threshold = float(self.config.get('ENSEMBLE_MODEL', 'SIMILARITY_THRESHOLD'))
         self.contamination = float(self.config.get('ENSEMBLE_MODEL', 'MODEL_CONTAMINATION'))
         self.max_features = int(self.config.get('ENSEMBLE_MODEL', 'MAX_FEATURES'))
 
@@ -384,23 +386,27 @@ class EnsembleModel:
             if prediction == -1 and score < self.threshold:  # Condition to consider higher scores
                 self.anomalies['log_text'].append(log_text)
                 self.anomalies['score'].append(score)  # Keep the score in its original form
-
+				
+   # Using the Ensemble model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
     def display_anomalies(self):
-        print("\n\n")
-        # Create a PrettyTable object
-        table = PrettyTable()
-        table.field_names = ["Anomaly Probability (%)", "Anomaly Score", "Similar", "(Combined Ensemble model) Log Line"]
-        table.align["Anomaly Probability (%)"] = "l"
-        table.align["Anomaly Score"] = "l"
-        table.align["Similar"] = "l"
-        table.align["(Combined Ensemble model) Log Line"] = "l"
+        print("\n\n\n")
+        console = Console()
+        table = Table(
+            show_header=True, 
+            expand=True,
+            header_style="bold white",
+            title_style="underline", 
+            caption=f"anomaly threshold: {self.threshold} similarity threshold: {self.similarity_threshold}"
 
-        # Similarity threshold
-        self.similarity_threshold = 0.8
+        )
+        table.title = f"Ensemble model anomalies"
+        table.add_column("Anomaly Probability (%)", justify="left", style="cyan")
+        table.add_column("Anomaly Score", justify="left", style="cyan")
+        table.add_column("Similar", justify="left", style="green")
+        table.add_column("(Combined Ensemble model) Log Line", justify="left", style="white")
+        rows = []  # Initialize an empty list to store rows
 
-        # Check if there are any anomalies
         if self.anomalies and len(self.anomalies['log_text']) > 0:
-            # Group similar log lines
             groups = []
             for log_text, score in zip(self.anomalies['log_text'], self.anomalies['score']):
                 normalized_score = 100 - ((score - self.global_min_score) / (self.global_max_score - self.global_min_score)) * 100
@@ -417,19 +423,19 @@ class EnsembleModel:
                 if not found_group:
                     groups.append({'log_text': log_text, 'score': score, 'normalized_score': normalized_score, 'count': 1})
 
-            # Add rows to the table
+            # Sort groups by 'normalized_score' in descending order
+            groups.sort(key=lambda x: x['normalized_score'], reverse=True)
+
             for group in groups:
                 anomaly_probability = "{:.3f}".format(group['normalized_score'])
                 anomaly_score = "{:.4f}".format(group['score'])
-                table.add_row([anomaly_probability, anomaly_score, group['count'], self.truncate_log_line(group['log_text'], 175)])
+                rows.append([anomaly_probability, anomaly_score, str(group['count']), self.truncate_log_line(group['log_text'], 175)])
 
-            # Sort the table by "Anomaly Score" in ascending order
-            table.sortby = "Anomaly Score"
-            table.reversesort = True
+            # Add sorted rows to the table
+            for row in rows:
+                table.add_row(*row)
         else:
-            # Add a row indicating no anomalies found
-            table.add_row(["-", "-", "None found", "None found"])
+            table.add_row("-", "-", "None found", "None found")
 
-        print(table)
-        print("\n\n")
-
+        console.print(table)
+        print("\n\n\n")

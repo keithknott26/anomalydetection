@@ -9,7 +9,14 @@ from drain3.template_miner_config import TemplateMinerConfig
 from drain3.file_persistence import FilePersistence
 from termcolor import colored
 from logger_config import logger
-
+from rich import print
+from rich.tree import Tree
+import io
+import contextlib
+from rich.console import Console
+import html
+from rich.table import Table
+from rich.style import Style
 
 class LogParser:
     def __init__(self):
@@ -64,6 +71,75 @@ class LogParser:
             r'^[\[\(]?[A-Za-z]{3,4} \w{3} \d{2} \d{2}:\d{2}:\d{2}\.\d{3} \d{4} \w{3}[\]\)]?' # Full Syslog with timezone and millis
         ]
     
+    
+
+    
+    def sanitize_text(self, text):
+        # Remove characters that might cause issues
+        sanitized_text = text.replace('[', '').replace(']', '')
+
+        return sanitized_text
+
+    def display_tree_from_print_tree(self, print_tree_output):
+        # Create a Tree instance
+        tree = Tree("Root")
+
+        # Parse the captured print_tree output and populate the tree
+        lines = print_tree_output.strip().split("\n")
+        current_node = tree
+        level_stack = []
+
+        for line in lines:
+            level = line.count("\t") + 1
+            text = self.sanitize_text(line.lstrip("\t"))  # Sanitize the text
+
+            if level > len(level_stack):
+                level_stack.append(current_node)
+
+            while level < len(level_stack):
+                level_stack.pop()
+
+            new_node = level_stack[-1].add(text)
+            current_node = new_node
+
+        # Print the tree using Rich console
+        console = Console()
+        console.print(tree)
+
+    def escape_tree_text(self, text):
+        return text.replace("<", "&lt;").replace(">", "&gt;")
+   
+    def escape_markup(self, text):
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        text = text.replace('&amp;', '&')
+        text = text.replace('[', '&#91;')
+        text = text.replace(']', '&#93;')
+        return text
+
+    def display_table_from_clusters(self, clusters):
+        table = Table(title="Clusters")
+        table.add_column("Cluster ID", justify="right")
+        table.add_column("Size", justify="right")
+        table.add_column("Description")
+
+        cyan_style = Style(color="cyan")
+        white_style = Style(color="white")
+        alternating_style = [cyan_style, white_style]
+
+        for index, cluster in enumerate(clusters):
+            cluster_id = str(cluster.cluster_id)
+            size = str(cluster.size)
+            description = str(cluster.log_template_tokens)
+            description = description.replace("<", "&lt;").replace(">", "&gt;")
+            description = self.escape_markup(description)
+
+            style = alternating_style[index % len(alternating_style)]
+            table.add_row(cluster_id, size, description, style=style)
+
+        console = Console()
+        console.print(table)
+
     def parse_log_lines(self, filepath, lines):
         # Performance stats
         line_count = 0
@@ -111,18 +187,30 @@ class LogParser:
         logger.info(f"[{colored(filepath, 'yellow')}] --> Done mining file in {time_took:.2f} sec. Total of {line_count} lines, rate {rate:.1f} lines/sec, "
                     f"{len(self.template_miner.drain.clusters)} clusters")
         sorted_clusters = sorted(self.template_miner.drain.clusters, key=lambda it: it.size, reverse=True)
-
+        #print(f"sorted_clusters: {sorted_clusters}")
         print(f"\n\n--------------------------------------------------")
         print(f"[{filepath}] --> Clusters:")
-        print(f"--------------------------------------------------")
-
-        for cluster in sorted_clusters:
-            print(cluster)
+        print(f"--------------------------------------------------\n")
+        
+        self.display_table_from_clusters(sorted_clusters)
+        
         print(f"\n\n--------------------------------------------------")
         print(f"[{filepath}] --> Prefix Tree:")
         print(f"--------------------------------------------------")
-        self.template_miner.drain.print_tree()
+        # Capture the output of self.template_miner.drain.print_tree()
+         # Capture the print_tree output
+        captured_output = io.StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            self.template_miner.drain.print_tree()
+
+        self.display_tree_from_print_tree(captured_output.getvalue())
+
         print("\n\n")
+
+
+
+
+
         #self.template_miner.profiler.report(0)
 
         #print(f"Result from add_log_message: {result")

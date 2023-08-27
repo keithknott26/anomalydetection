@@ -22,6 +22,9 @@ from prettytable import PrettyTable
 import Levenshtein
 from Levenshtein import ratio
 from termcolor import colored
+from rich.console import Console
+from rich.table import Table
+from rich.style import Style
 
 # Local Modules
 from database_manager import DatabaseManager
@@ -223,50 +226,62 @@ class ModelManager:
 
         return anomaly_features, anomaly_log_texts
     
-    from Levenshtein import ratio
-
     def display_anomalies(self):
-        # Create a PrettyTable object
-        table = PrettyTable()
-        table.field_names = ["Anomaly Probability(%)", "Anomaly Score", "Similar", f"(Model for {self.logfile_path}) Log Line"]
-        table.align["Anomaly Probability(%)"] = "l"
-        table.align["Anomaly Score"] = "l"
-        table.align["Similar Lines"] = "l"
-        table.align[f"(Model for {self.logfile_path}) Log Line"] = "l"
+        print("\n\n\n")
+        console = Console()
 
-        # Check if there are any anomalies
+        table = Table(
+            title=f"Anomalies - individual model for {self.logfile_path}",
+            show_header=True,
+            header_style="bold white",
+            title_style="underline",
+            expand=False,
+            caption=f"anomaly threshold: {self.threshold} similarity threshold: {self.similarity_threshold}"
+        )
+        
+        table.add_column("Anomaly Probability(%)", justify="left", style="cyan")
+        table.add_column("Anomaly Score", justify="left", style="cyan")
+        table.add_column("Similarity", justify="left", style="green")
+        table.add_column(f"(Model for {self.logfile_path}) Log Line", justify="left")
+
+        red_style = Style(color="yellow")
+        white_style = Style(color="white")
+        alternating_style = [red_style, white_style]
+
         if self.anomalies and len(self.anomalies['log_text']) > 0:
-            # Group similar log lines
             groups = []
             for log_text, score in zip(self.anomalies['log_text'], self.anomalies['score']):
                 normalized_score = 100 - ((score - self.global_min_score) / (self.global_max_score - self.global_min_score)) * 100
                 found_group = False
                 for group in groups:
-                    if ratio(log_text, group['log_text']) >= self.similarity_threshold: # 80% similarity threshold
+                    if ratio(log_text, group['log_text']) >= self.similarity_threshold:
                         group['count'] += 1
-                        if normalized_score > group['normalized_score']: # Keep the highest score and corresponding log text
+                        if normalized_score > group['normalized_score']:
                             group['normalized_score'] = normalized_score
                             group['score'] = score
-                            group['log_text'] = log_text
+                            group['log_text'] = log_text[:500]
                         found_group = True
                         break
                 if not found_group:
                     groups.append({'log_text': log_text, 'score': score, 'normalized_score': normalized_score, 'count': 1})
 
-            # Add rows to the table
-            # Add rows to the table
-            for group in groups:
+            # Sort the groups by anomaly score
+            sorted_groups = sorted(groups, key=lambda group: group['score'], reverse=True)
+
+            for idx, group in enumerate(sorted_groups):
                 anomaly_probability = "{:.4f}".format(group['normalized_score'])
                 anomaly_score = "{:.4f}".format(group['score'])
-                table.add_row([anomaly_probability, anomaly_score, group['count'], self.truncate_log_line(group['log_text'], 175)])            # Sort the table by "Anomaly Score" in ascending order
-            table.sortby = "Anomaly Score"
-            table.reversesort = True
+
+                style = alternating_style[idx % len(alternating_style)]
+                table.add_row(
+                    anomaly_probability, anomaly_score, str(group['count']), 
+                    group['log_text'], style=style
+                )
         else:
-            # Add a row indicating no anomalies found
-            table.add_row(["-", "-", "None found"])
+            table.add_row("-", "-", "None found")
 
-        print(table)
-
+        console.print(table)
+        print("\n\n\n")
 
     def truncate_log_line(self, log_line, max_length=100):
         if isinstance(log_line, dict):

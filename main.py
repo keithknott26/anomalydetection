@@ -42,19 +42,19 @@ from termcolor import colored
 
 class ColoredFormatter(logging.Formatter):
     LEVEL_COLORS = {
-        'INFO': 'yellow',
-        'DEBUG': 'grey',
+        'INFO': 'white',
+        'DEBUG': 'yellow',
         'WARNING': 'magenta',
         'ERROR': 'red',
         'CRITICAL': 'red',
     }
 
     LINE_COLORS = {
-        'INFO': 'green',
-        'DEBUG': 'green',
-        'WARNING': 'green',
-        'ERROR': 'green',
-        'CRITICAL': 'green',
+        'INFO': 'white',
+        'DEBUG': 'white',
+        'WARNING': 'magenta',
+        'ERROR': 'magenta',
+        'CRITICAL': 'magenta',
     }
 
     FILENAME_COLOR = 'yellow'
@@ -145,7 +145,7 @@ def process_file(filepath, hash_value, log_dir):
     local_connection = database_manager_instance.get_connection()
     log_retriever = LogRetriever()  # Create a local instance if necessary
     log_parser = LogParser()  # Create a local instance if necessary
-    logger.info(f"[colored({filepath},'yellow')] ---> Starting work on chunk {colored(hash_value, 'blue')}")
+    logger.info(f"[{colored({filepath},'yellow')}] ---> Starting work on chunk {colored(hash_value, 'blue')}")
 
     #factory = ModelManagerFactory()
     #manager = factory.get_manager(filepath, log_retriever, log_parser, database_manager_instance) #Create a separate instance of model manager per file
@@ -247,7 +247,7 @@ def process_ensemble_model(model_manager_instance, log_retriever, log_parser, co
             logger.info(f"[Ensemble model] --> structured Logs: ({len(structured_logs)})")
             if len(structured_logs) > 0:
                 ensemble_model_instance.extract_features(structured_logs)
-                logger.info(f"[Ensemble model] --> ensemble features: ({colored(len(ensemble_model_instance.features_dict),'yellow')} dictionary items, numpy array size: {colored(np.size(ensemble_model_instance.features_np_array), 'grey')} shape: {colored(np.shape(ensemble_model_instance.features_np_array), 'grey')}")
+                logger.info(f"[Ensemble model] --> ensemble features: ({colored(len(ensemble_model_instance.features_dict),'yellow')} dictionary items, numpy array size: {colored(np.size(ensemble_model_instance.features_np_array), 'yellow')} shape: {colored(np.shape(ensemble_model_instance.features_np_array), 'yellow')}")
                 ensemble_model = ensemble_model_instance.train_ensemble_model()
                 logger.info(f"[Ensemble model] --> model trained.")
                 logger.info(f"[Ensemble model] --> detecting anomalies")
