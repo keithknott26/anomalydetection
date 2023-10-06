@@ -11,4 +11,6 @@ prettytable
 Levenshtein
 termcolor
 rich
-
+dash
+loguru
+joblib

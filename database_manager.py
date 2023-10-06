@@ -12,7 +12,7 @@ class DatabaseManager:
         self.create_table()
 
     def get_connection(self):
-        return sqlite3.connect(self.db_path)
+        return sqlite3.connect(self.db_path, check_same_thread=False)
 
     def create_table(self):
         with self.lock:
@@ -51,8 +51,9 @@ class DatabaseManager:
                 cursor.execute('''
                 CREATE TABLE IF NOT EXISTS anomaly_log_texts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    model_name TEXT NOT NULL UNIQUE,
-                    log_text TEXT NOT NULL
+                    model_name TEXT NOT NULL,
+                    log_text TEXT NOT NULL,
+                    is_anomaly INTEGER DEFAULT 1
                 )
                 ''')
                 cursor.execute('''
@@ -249,7 +250,32 @@ class DatabaseManager:
                     INSERT OR REPLACE INTO model_associations (log_file_id, log_filepath, model_filename)
                     VALUES (?, ?, ?)
                 """, (log_file_id, filepath, model_filename))
-    
+
+    def insert_anomaly_log_text(self, model_name, log_text):
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute('INSERT INTO anomaly_log_texts (model_name, log_text) VALUES (?, ?)', (model_name, log_text))
+                    conn.commit()
+                    return True
+                except sqlite3.Error as e:
+                    print(f"Database error: {e}")
+                    return False
+
+    def update_anomaly_status(self, log_text_id, is_anomaly, model_nameh):
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE anomaly_log_texts SET is_anomaly = ?, feedback = 1 WHERE id = ? AND model_name = ?', (is_anomaly, log_text_id, model_name))
+                conn.commit()
+
+    def fetch_anomaly_data(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT log_text FROM anomaly_log_texts WHERE is_anomaly = 1')
+            return [row[0] for row in cursor.fetchall()]
+
     def get_anomaly_log_texts(self, model_name):
         with self.lock:
             with self.get_connection() as conn:
@@ -257,6 +283,11 @@ class DatabaseManager:
                 cursor.execute('SELECT log_text FROM anomaly_log_texts WHERE model_name = ?', (model_name,))
                 log_texts = [row[0] for row in cursor.fetchall()]
                 return log_texts
+
+    def get_feedback_count(self, model_name):
+        with self.conn:
+            cursor = self.conn.execute("SELECT COUNT(*) FROM anomaly_log_texts WHERE model_name = ? AND feedback = 1", (model_name,))
+            return cursor.fetchone()[0]
 
     def get_anomaly_features(self, model_name):
         with self.lock:
@@ -266,3 +297,16 @@ class DatabaseManager:
                 features = [row[0] for row in cursor.fetchall()]
                 return features
 
+    def get_all_unique_model_names(self):
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT DISTINCT model_filename FROM model_associations")
+                model_names = [row[0] for row in cursor.fetchall()]
+                return model_names
+
+    def update_model_version(self, new_version):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE model_metadata SET version = ?', (new_version,))
+            conn.commit()

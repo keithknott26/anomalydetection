@@ -223,7 +223,8 @@ class ModelManager:
                 self.anomalies['log_text'].append(log_text)
                 self.anomalies['score'].append(score)
                 self.anomalies['log_text'].append(anomaly_log_text) # Directly append the log text
-
+                #Add the anomaly to the database
+                self.database_manager.insert_anomaly_log_text(self.model_path, log_text)
         return anomaly_features, anomaly_log_texts
     
     def display_anomalies(self):
@@ -241,7 +242,7 @@ class ModelManager:
         
         table.add_column("Anomaly Probability(%)", justify="left", style="cyan")
         table.add_column("Anomaly Score", justify="left", style="cyan")
-        table.add_column("Similarity", justify="left", style="green")
+        table.add_column("Similar", justify="left", style="green")
         table.add_column(f"(Model for {self.logfile_path}) Log Line", justify="left")
 
         red_style = Style(color="yellow")
@@ -293,7 +294,6 @@ class ModelManager:
 
         return log_line_str + '...' if len(content) > max_length else log_line_str
 
-    
     def align_features(self, features, expected_features):
         features_array = np.array(features)  # Convert to a NumPy array if not already
         logger.info(f"[{colored(self.logfile_path, 'yellow')}] ---> Features (number of dimensions): {np.ndim(features_array)}")
@@ -362,4 +362,5 @@ class ModelManager:
         ensemble_model_file = os.path.basename(self.config.get('ENSEMBLE_MODEL', 'MODEL_PATH'))
         model_files = [f for f in os.listdir(f"{models_directory}") if f.endswith('.pkl') and ensemble_model_file not in f]
         return model_files
+
 

@@ -21,7 +21,7 @@ class LogRetriever:
         self.log_type = "system"
         self.lock = Lock()
         # Initialize SQLite database
-        self.db_connection = sqlite3.connect('logs.db')
+        self.db_connection = sqlite3.connect('logs.db', check_same_thread=False)
         self.db_connection.row_factory = sqlite3.Row
         self.database_manager = DatabaseManager()
         # Initialize the task scheduler

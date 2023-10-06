@@ -18,6 +18,7 @@ from Levenshtein import ratio
 from termcolor import colored
 from rich.console import Console
 from rich.table import Table
+from rich.style import Style
 
 # Local Modules
 from model_manager import ModelManager
@@ -175,16 +176,16 @@ class EnsembleModel:
         joblib.dump(serializable_model, filepath)
 
     def prepare_for_serialization(self, ensemble_model, models):
-            # Return a dictionary with attributes that can be pickled
-            return {
-                'ensemble_model': ensemble_model,
-                'models': models,
-                # add other attributes that can be serialized
-                'database_manager': None,
-                'log_parser': None,
-                'log_retriever': None,
-                'model_manager': None
-            }
+        # Return a dictionary with attributes that can be pickled
+        return {
+            'ensemble_model': ensemble_model,
+            'models': models,
+            # add other attributes that can be serialized
+            'database_manager': None,
+            'log_parser': None,
+            'log_retriever': None,
+            'model_manager': None
+        }
     
     def align_features(self, features, expected_features):
         # If features are more than expected, trim them
@@ -373,7 +374,6 @@ class EnsembleModel:
     
     # Using the Ensemble model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
     def detect_anomalies(self, combined_anomaly_log_texts_list):
-        
         # Iterate through the features dictionary
         for idx, (log_text, feature) in enumerate(self.features_dict.items()):
             score = self.scores[idx]  # Use the original score
@@ -386,14 +386,16 @@ class EnsembleModel:
             if prediction == -1 and score < self.threshold:  # Condition to consider higher scores
                 self.anomalies['log_text'].append(log_text)
                 self.anomalies['score'].append(score)  # Keep the score in its original form
-				
+                #Add the anomaly to the database
+                self.database_manager.insert_anomaly_log_text(self.ensemble_model_path, log_text)
+
    # Using the Ensemble model dictionary, obtain a combined numpy array of the anomaly features for each model in the dictionary, preserving shape
     def display_anomalies(self):
         print("\n\n\n")
         console = Console()
         table = Table(
             show_header=True, 
-            expand=True,
+            expand=False,
             header_style="bold white",
             title_style="underline", 
             caption=f"anomaly threshold: {self.threshold} similarity threshold: {self.similarity_threshold}"
@@ -417,7 +419,7 @@ class EnsembleModel:
                         if normalized_score > group['normalized_score']:
                             group['normalized_score'] = normalized_score
                             group['score'] = score
-                            group['log_text'] = log_text
+                            group['log_text'] = log_text[:500]
                         found_group = True
                         break
                 if not found_group:
@@ -429,7 +431,7 @@ class EnsembleModel:
             for group in groups:
                 anomaly_probability = "{:.3f}".format(group['normalized_score'])
                 anomaly_score = "{:.4f}".format(group['score'])
-                rows.append([anomaly_probability, anomaly_score, str(group['count']), self.truncate_log_line(group['log_text'], 175)])
+                rows.append([anomaly_probability, anomaly_score, str(group['count']), group['log_text']])
 
             # Add sorted rows to the table
             for row in rows:
@@ -439,3 +441,7 @@ class EnsembleModel:
 
         console.print(table)
         print("\n\n\n")
+
+    def update_anomaly_status_in_db(self, log_text_id, is_anomaly):
+        self.database_manager.update_anomaly_status(log_text_id, is_anomaly, self.ensemble_model_path)
+
