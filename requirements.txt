@@ -14,3 +14,4 @@ rich
 dash
 loguru
 joblib
+termcolor
