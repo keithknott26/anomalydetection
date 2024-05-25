@@ -38,6 +38,7 @@ class LogParser:
         
         # List of common timestamp patterns in various log files, expected at the start of the line
         self.timestamp_patterns = [
+            r'^[\[\(]?\d{2}.\d{2}.\d{2} \d{2}:\d{2}:\d{2}.\d{1,9}[\]\)]?', # Format with hyphens (ex: 24.05.25 11:47:32.910019467)
             r'^[\[\(]?\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[\]\)]?', # Format with hyphens
             r'^[\[\(]?\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}[\]\)]?', # Format with slashes
             r'^[\[\(]?\d{2}/\d{2}/\d{4}:\d{2}:\d{2}:\d{2}[\]\)]?', # Format with colon
